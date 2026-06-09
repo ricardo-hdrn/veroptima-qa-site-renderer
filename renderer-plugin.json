@@ -1,0 +1,8 @@
+{
+  "name": "veroptima-qa-site-renderer",
+  "version": "0.1.0",
+  "entry": "./src/index.ts",
+  "family": "renderer",
+  "subkind": "site",
+  "contractVersion": "0.1.0"
+}
