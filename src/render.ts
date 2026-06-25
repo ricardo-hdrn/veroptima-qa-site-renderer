@@ -107,6 +107,8 @@ const HTML_CLOSE = `
 export async function renderFragment(inputs: SiteInputs): Promise<{ html: string; css: string }> {
   const css = await loadCss();
   const html =
+    renderTabNav() +
+    "\n" +
     renderStats(inputs) +
     "\n<main>\n" +
     [
