@@ -99,6 +99,30 @@ const HTML_CLOSE = `
 </body>
 </html>`;
 
+/**
+ * Embed/fragment mode — section content only (no doc chrome / hero / footer / scripts), with the
+ * stylesheet returned separately so a host can scope it (Shadow DOM) and remap the color vars to its
+ * own design tokens. Powers the dynamic, console-themed feature view (no iframe).
+ */
+export async function renderFragment(inputs: SiteInputs): Promise<{ html: string; css: string }> {
+  const css = await loadCss();
+  const html =
+    renderStats(inputs) +
+    "\n<main>\n" +
+    [
+      renderCompletude(inputs),
+      renderWhatDoes(inputs),
+      renderFeatureSpec(inputs),
+      renderObjectives(inputs),
+      renderCases(inputs),
+      renderDecisions(inputs),
+      renderFindings(inputs),
+      renderExecution(inputs),
+    ].join("\n") +
+    "\n</main>";
+  return { html, css };
+}
+
 export async function renderSite(inputs: SiteInputs): Promise<SiteOutput> {
   const css = await loadCss();
   const sectionsMain =
