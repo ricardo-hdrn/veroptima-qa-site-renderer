@@ -104,7 +104,9 @@ const HTML_CLOSE = `
  * stylesheet returned separately so a host can scope it (Shadow DOM) and remap the color vars to its
  * own design tokens. Powers the dynamic, console-themed feature view (no iframe).
  */
-export async function renderFragment(inputs: SiteInputs): Promise<{ html: string; css: string }> {
+export async function renderFragment(
+  inputs: SiteInputs,
+): Promise<{ html: string; css: string; scripts: string[] }> {
   const css = await loadCss();
   const html =
     renderTabNav() +
@@ -122,7 +124,11 @@ export async function renderFragment(inputs: SiteInputs): Promise<{ html: string
       renderExecution(inputs),
     ].join("\n") +
     "\n</main>";
-  return { html, css };
+  // Script bodies (no <script> tags) — the host runs these with `document` rebound to the embed root,
+  // since the renderer's scripts target `document` and can't reach into a Shadow DOM.
+  const strip = (s: string) => s.replace(/<\/?script[^>]*>/g, "");
+  const scripts = [renderTabScript(), renderGaugeScript(), renderCasesScript(), renderDecisionsScript()].map(strip);
+  return { html, css, scripts };
 }
 
 export async function renderSite(inputs: SiteInputs): Promise<SiteOutput> {
