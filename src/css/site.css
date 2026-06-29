@@ -296,6 +296,17 @@
   a.drill-shot img{width:100%;max-height:320px;object-fit:contain;display:block;background:#0b1220}
   .drill-empty,.drill-noimg{font-size:12px;padding:6px 4px}
 
+  /* Evidence-image REDACTION gate (deploy-safe default) — raw client pixels
+     are placeholdered; the step labels/indices + run meta stay visible. */
+  .drill-redacted-note{font-size:12px;margin:2px 0 8px;color:#fbbf24}
+  .drill-lock{font-style:normal}
+  span.drill-shot.drill-redacted{display:flex;align-items:center;justify-content:center;gap:8px;
+    min-height:120px;padding:14px;border-radius:9px;font-size:12.5px;font-weight:700;color:#fcd34d;
+    text-align:center;background:repeating-linear-gradient(45deg,#0b1220,#0b1220 10px,#111a2e 10px,#111a2e 20px);
+    border:1px dashed #334155;filter:blur(.3px)}
+  .vid.vid-redacted{display:inline-flex;align-items:center;gap:7px;font-weight:800;font-size:13px;
+    color:#fcd34d;background:#3f2d0a;padding:9px 16px;border-radius:9px}
+
   /* §05b per-flow results surface — EVERY adjudicated flow → proving-run drill */
   .pf-intro{font-size:12.5px;margin:2px 0 14px}
   .pf-root{display:flex;flex-direction:column;gap:12px}

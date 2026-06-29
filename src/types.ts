@@ -104,3 +104,35 @@ export type AdjudicatedSiteInputs = SiteInputs & {
 export function readAdjudicated(inputs: SiteInputs): SiteAdjudicatedKpis | undefined {
   return (inputs as AdjudicatedSiteInputs).adjudicated;
 }
+
+/**
+ * Evidence-image REDACTION toggle (deploy-security gate).
+ *
+ * The evidence drill embeds REAL client-app screenshots (and an optional
+ * session video). Until the deployed-site access model is confirmed, the site
+ * must ship with those raw pixels GATED — the drill STRUCTURE/METADATA/COUNTS
+ * (run ids, `step-NNN-<action>` labels, scenario/run details, per-flow status,
+ * step counts) stay visible; only the `<img src>`/video is replaced with a
+ * redaction placeholder.
+ *
+ * The flag is a top-level field the host (qa-expert site-cmd) passes on the
+ * inputs object: `inputs.redactEvidenceImages`. The contract `SiteInputsSchema`
+ * is `.strict()` and does NOT (yet) carry this field in its TYPES — the SAME
+ * situation as `adjudicated` above — so we mirror it LOCALLY and read it
+ * defensively off the runtime object.
+ */
+export type RedactableSiteInputs = SiteInputs & {
+  /** When true (or absent) → raw screenshots/video gated. Only `false` opens. */
+  redactEvidenceImages?: boolean;
+};
+
+/**
+ * Defensive reader for the redaction toggle. DEFAULT ON (true): absence (deploy
+ * default), a missing field, or any non-`false` value all resolve to REDACTED
+ * (the safe state). ONLY an EXPLICIT `false` renders the raw screenshots/video
+ * (the authorized-audience view). The default MUST stay ON so an unconfigured
+ * deploy never exposes raw client pixels.
+ */
+export function readRedactEvidenceImages(inputs: SiteInputs): boolean {
+  return (inputs as RedactableSiteInputs).redactEvidenceImages === false ? false : true;
+}

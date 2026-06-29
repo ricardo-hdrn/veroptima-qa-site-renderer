@@ -157,7 +157,11 @@ function makeInputs(): AdjudicatedSiteInputs {
     builtAtIso: FIXED_TIME,
     locale: "pt-BR",
     adjudicated: ADJ,
-  };
+    // Proving-run SELECTION tests assert the real screenshot URLs, so they
+    // render the AUTHORIZED (unredacted) view. The deploy-safe DEFAULT (ON) and
+    // its gating are pinned separately in redaction.test.ts.
+    redactEvidenceImages: false,
+  } as AdjudicatedSiteInputs & { redactEvidenceImages: boolean };
 }
 
 /** The verdict runId a flow's row carries (single source of truth to compare). */

@@ -39,6 +39,7 @@
  */
 import { readFlowProvingRuns, readFlowStatus } from "./coverage.js";
 import { esc } from "./escape.js";
+import { readRedactEvidenceImages } from "./types.js";
 import type { AdjudicatedFlowStatus, SiteInputs } from "./types.js";
 
 /** Role a proving run plays in the drill (drives the side-by-side label). */
@@ -264,8 +265,25 @@ const ROLE_LABEL: Record<ProvingRole, string> = {
   single: "Execução que provou o veredito",
 };
 
-/** Render one proving-run panel: details + ordered steps + screenshots. */
-function renderRun(run: DrillRun): string {
+/**
+ * Render one step's evidence tile. When `redacted` (the deploy-safe default) and
+ * the step HAS a screenshot, emit a redaction placeholder INSTEAD of the
+ * `<img src>` — the raw client pixels are gated, but the step's label/index are
+ * rendered by the caller and stay visible. A step with no capture on disk shows
+ * the honest "(sem captura)" either way (no pixels to gate).
+ */
+function renderStepImage(s: DrillStep, label: string, redacted: boolean): string {
+  if (!s.imageRel) return `<span class="drill-noimg faint">(sem captura)</span>`;
+  if (redacted) {
+    return `<span class="drill-shot drill-redacted" data-redacted="true" title="${esc(label)}"><span class="drill-lock" aria-hidden="true">🔒</span> captura ocultada — acesso restrito</span>`;
+  }
+  return `<a class="drill-shot" href="${esc(s.imageRel)}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(s.imageRel)}" alt="${esc(label)}"></a>`;
+}
+
+/** Render one proving-run panel: details + ordered steps + screenshots. When
+ *  `redacted`, the raw screenshots/video are gated behind placeholders while
+ *  every step label/index and the run meta stay visible. */
+function renderRun(run: DrillRun, redacted: boolean): string {
   const stepsHtml =
     run.steps.length === 0
       ? `<p class="drill-empty faint">(nenhuma captura registrada para esta execução)</p>`
@@ -273,16 +291,16 @@ function renderRun(run: DrillRun): string {
         run.steps
           .map((s) => {
             const label = s.stepIndex !== null ? `step-${s.stepIndex}-${s.action}` : s.action;
-            const img = s.imageRel
-              ? `<a class="drill-shot" href="${esc(s.imageRel)}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(s.imageRel)}" alt="${esc(label)}"></a>`
-              : `<span class="drill-noimg faint">(sem captura)</span>`;
+            const img = renderStepImage(s, label, redacted);
             return `<li class="drill-step"><div class="drill-step-h"><span class="drill-step-idx mono">${s.stepIndex !== null ? esc(String(s.stepIndex)) : "—"}</span><span class="drill-step-act mono">${esc(label)}</span></div>${img}</li>`;
           })
           .join("\n") +
         `</ol>`;
   const noShots = run.hasEvidence ? "" : `<p class="drill-empty faint">(nenhuma captura em disco para esta execução)</p>`;
   const video = run.videoRel
-    ? `<a class="vid" href="${esc(run.videoRel)}" target="_blank" rel="noopener">▶ vídeo da sessão</a>`
+    ? redacted
+      ? `<span class="vid vid-redacted faint" data-redacted="true"><span class="drill-lock" aria-hidden="true">🔒</span> vídeo ocultado — acesso restrito</span>`
+      : `<a class="vid" href="${esc(run.videoRel)}" target="_blank" rel="noopener">▶ vídeo da sessão</a>`
     : "";
   return `
 <div class="drill-run" data-proving-run="${esc(run.runId)}" data-proving-role="${esc(run.role)}">
@@ -310,13 +328,21 @@ export function renderFlowDrill(inputs: SiteInputs, flowId: string): string {
   const drill = buildFlowDrill(inputs, flowId);
   if (!drill) return "";
   const both = drill.runs.length > 1;
+  // Deploy-security gate: ON by default (raw client screenshots/video gated).
+  // The drill STRUCTURE/METADATA/COUNTS stay visible regardless; only the pixels
+  // are placeholdered. `data-evidence-redacted` makes the state machine-checkable.
+  const redacted = readRedactEvidenceImages(inputs);
+  const redactedNote = redacted
+    ? `<p class="drill-redacted-note faint">🔒 Capturas ocultadas — acesso restrito (estrutura, passos e ids do run permanecem visíveis).</p>`
+    : "";
   return `
 <dt>Execução que provou o veredito</dt>
 <dd>
-  <details class="drill${both ? " drill-both" : ""}" data-flow="${esc(drill.flowId)}" data-drill-status="${esc(drill.status)}">
+  <details class="drill${both ? " drill-both" : ""}${redacted ? " drill-evidence-redacted" : ""}" data-flow="${esc(drill.flowId)}" data-drill-status="${esc(drill.status)}" data-evidence-redacted="${redacted ? "true" : "false"}">
     <summary class="drill-summary">Abrir a execução comprovante${both ? " (contradição: ambas as execuções)" : ""} ▾</summary>
+    ${redactedNote}
     <div class="drill-runs">
-      ${drill.runs.map(renderRun).join("\n")}
+      ${drill.runs.map((r) => renderRun(r, redacted)).join("\n")}
     </div>
   </details>
 </dd>`;
