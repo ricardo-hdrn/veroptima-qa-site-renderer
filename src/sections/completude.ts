@@ -281,8 +281,12 @@ function renderGroundedResult(adj: SiteAdjudicatedKpis | undefined): string {
     <b>não foram medidas</b>. Nenhum valor 0%/100% é exibido como resultado.</p>
   </div>`;
   }
-  const complPct = adj.completude.pct;
-  const confPct = adj.conformidade.pct;
+  // Round ONCE for display, with the SAME rule the monitor/cockpit/TUI use
+  // (Math.round). The single rounded value flows into the visible text, the
+  // data-attribute, AND the gauge data-pct — they cannot diverge, and no raw
+  // 15-digit float is ever rendered.
+  const complPct = Math.round(adj.completude.pct);
+  const confPct = Math.round(adj.conformidade.pct);
   const bugs = adj.bugsApp.count;
   const integ = adj.verdictIntegrity;
   const bugFlows = adj.bugsApp.flows.length

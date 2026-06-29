@@ -311,3 +311,47 @@ describe("renderSite — grounded adjudicated result is the headline", () => {
     expect(out.html).toContain('data-grounded-bugsapp="0"');
   });
 });
+
+describe("renderSite — grounded pcts are rounded ONCE (Math.round) for display", () => {
+  // A fractional ratio that exposes the floor-vs-round bug: completude 3/8 = 37.5
+  // (floor 37, round 38 — the monitor shows 38) and conformidade 2/3 = 66.666…
+  // (floor 66, round 67 — the monitor shows 67).
+  const FRACTIONAL: SiteAdjudicatedKpis = {
+    noAdjudicatedData: false,
+    completude: { verified: 3, addressable: 8, pct: 37.5 },
+    conformidade: { approved: 2, addressable: 3, pct: 66.66666666666667 },
+    bugsApp: { count: 0, flows: [] },
+    verdictIntegrity: { count: 0, flows: [] },
+  };
+
+  test("visible text == data-attribute == gauge, all Math.round'd, no raw float", async () => {
+    const out = await renderSite(makeInputs(FRACTIONAL));
+
+    // Math.round, matching the monitor: 37.5 → 38, 66.66… → 67.
+    // Visible result text.
+    expect(out.html).toContain("<b>38%</b>");
+    expect(out.html).toContain("<b>67%</b>");
+    // Data-attributes carry the SAME rounded int.
+    expect(out.html).toContain('data-grounded-completude="38"');
+    expect(out.html).toContain('data-grounded-conformidade="67"');
+    // Gauges painted from the SAME rounded int.
+    expect(out.html).toContain('id="g-compl" data-pct="38"');
+    expect(out.html).toContain('id="g-conf" data-pct="67"');
+    // Hero KPI cards (stats) show the rounded value too.
+    expect(out.html).toContain('<div class="v">38%</div>');
+    expect(out.html).toContain('<div class="v">67%</div>');
+
+    // visible == attribute: the floored variants must NOT appear anywhere.
+    expect(out.html).not.toContain("37%");
+    expect(out.html).not.toContain("66%");
+    expect(out.html).not.toContain('data-grounded-completude="37"');
+    expect(out.html).not.toContain('data-grounded-conformidade="66"');
+
+    // NO raw float rendered for the grounded pcts.
+    expect(out.html).not.toContain("37.5");
+    expect(out.html).not.toContain("66.66");
+    expect(out.html).not.toContain("66.667");
+    // No 15-digit float anywhere in the document.
+    expect(/\d+\.\d{3,}/.test(out.html)).toBe(false);
+  });
+});

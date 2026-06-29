@@ -58,14 +58,19 @@ export function renderStats(inputs: SiteInputs): string {
   // when present. When there is no verdict source we render an honest gap ("—")
   // — NEVER the synth-derived 0%/100% as the headline result. The synth-derived
   // numbers are demoted into the labeled "Síntese" section in §Completude.
+  // Round ONCE for display (Math.round — same rule as the monitor/cockpit/TUI).
+  // The single rounded value is the only number rendered; no raw float reaches
+  // the visible text.
+  const groundedComplPct = grounded ? Math.round(grounded.completude.pct) : 0;
+  const groundedConfPct = grounded ? Math.round(grounded.conformidade.pct) : 0;
   const resultCards = grounded
     ? `
     <div class="stat green">
-      <div class="v">${grounded.completude.pct}%</div>
+      <div class="v">${groundedComplPct}%</div>
       <div class="l">Completude — verificados/endereçáveis (adjudicado: ${grounded.completude.verified}/${grounded.completude.addressable})</div>
     </div>
     <div class="stat">
-      <div class="v">${grounded.conformidade.pct}%</div>
+      <div class="v">${groundedConfPct}%</div>
       <div class="l">Conformidade — aprovados/endereçáveis (adjudicado: ${grounded.conformidade.approved}/${grounded.conformidade.addressable})</div>
     </div>
     <div class="stat red">
