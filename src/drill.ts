@@ -4,32 +4,40 @@
  * evidenceDir.scenario === runId, never the scenario id).
  *
  * Each per-flow body status cell drills to the RUN that PROVED its verdict →
- * that run's ordered STEPS → each step's step-anchored SCREENSHOT. Everything is
- * single-sourced from `flowsWithVerdicts` / `evidenceDirs`; nothing is invented.
+ * that run's ordered STEPS → each step's step-anchored SCREENSHOT. The RUN is
+ * selected from `adjudicated.flowProvingRuns` (the verdict-row source); the
+ * step labels/screenshots are still joined from `flowsWithVerdicts` /
+ * `evidenceDirs`. Nothing is invented.
  *
  * ── THE PROVING-RUN RULE (deterministic, single-source) ──────────────────────
- * For a flow F, the proving run(s) come from `flowsWithVerdicts[F].tries[]`
- * (ordered emittedAt-ASC; `.verdict` is the latest). Selection is driven by the
- * flow's ADJUDICATED status (`adjudicated.flowStatus[F]` — the SAME source the
- * body status cell's % is computed from, so the drill's runId is the SAME runId
- * the verdict row carries):
+ * For a flow F, the proving run(s) come from `adjudicated.flowProvingRuns[F]`
+ * (`{ satisfiedRun?, violatedRun? }`) — emitted by the host from the SAME
+ * verdict rows that classify `flowStatus`, so the run that satisfies/violates is
+ * THE run the % source carries. Selection is keyed by the flow's ADJUDICATED
+ * status (`adjudicated.flowStatus[F]`):
  *
- *   - satisfied      (Coberto)      → the LAST `pass` try's runId.
- *   - violated       (Falhou)       → the LAST `fail` try's runId.
- *   - contradictory  (Integridade)  → BOTH: the last `pass` run AND the last
- *                                     `fail` run, rendered side by side — the
- *                                     contradiction IS the finding; we NEVER
- *                                     pick one and hide the other.
- *   - blocked / not_adjudicated / excluded / unmapped (or no flow entry / no
- *     matching try) → NO proving run → NO drill (we render no fabricated
- *     evidence; the cell keeps its existing state).
+ *   - satisfied      (Coberto)      → flowProvingRuns[F].satisfiedRun.
+ *   - violated       (Falhou)       → flowProvingRuns[F].violatedRun.
+ *   - contradictory  (Integridade)  → BOTH: satisfiedRun AND violatedRun,
+ *                                     rendered side by side — the contradiction
+ *                                     IS the finding; we NEVER pick one and hide
+ *                                     the other.
+ *   - blocked / not_adjudicated / excluded / unmapped (or no proving-run entry)
+ *     → NO proving run → NO drill (we render no fabricated evidence; the cell
+ *     keeps its existing state).
+ *
+ * Run selection NO LONGER depends on `tries[].status` (the pass/incomplete/fail
+ * FlowVerdict vocab), which DIVERGED from `flowStatus`: a satisfied flow whose
+ * tries carried no `pass` row used to render 0 drills even though the verdict
+ * row proved it. The matching try (joined by runId) is still read for richer
+ * step labels, but it does NOT drive selection.
  *
  * The chosen runId is therefore the SAME run the corresponding verdict row
  * carries. The drill element exposes it as `data-proving-run` (machine-
  * extractable for the Part-3 gate: drill-run-id == verdict-run-id), alongside
  * `data-flow`.
  */
-import { readFlowStatus } from "./coverage.js";
+import { readFlowProvingRuns, readFlowStatus } from "./coverage.js";
 import { esc } from "./escape.js";
 import type { AdjudicatedFlowStatus, SiteInputs } from "./types.js";
 
@@ -97,11 +105,11 @@ function findFlowEntry(inputs: SiteInputs, flowId: string): { tries: FlowTry[] }
   return null;
 }
 
-/** Last try (emittedAt-ASC order) matching a status — i.e. the adjudicating run. */
-function lastTryWithStatus(tries: FlowTry[], status: FlowTry["status"]): FlowTry | null {
-  for (let i = tries.length - 1; i >= 0; i--) {
-    if (tries[i]!.status === status) return tries[i]!;
-  }
+/** The try whose runId matches the chosen proving run (for richer step labels +
+ *  its FlowVerdict status). `null` when no try carries that runId — selection is
+ *  driven by flowProvingRuns, so the drill still renders from the evidence dir. */
+function findTryByRunId(tries: FlowTry[], runId: string): FlowTry | null {
+  for (const t of tries) if (t.runId === runId) return t;
   return null;
 }
 
@@ -121,12 +129,19 @@ export function parseStepAction(basename: string): string {
 
 const IMG_RE = /\.(png|jpe?g|webp|gif)$/i;
 
-/** Build the ordered DrillSteps for one proving run. */
-function buildSteps(run: FlowTry, evDir: EvidenceDir | undefined): { steps: DrillStep[]; hasEvidence: boolean } {
-  const base = `evidence/${encodeURIComponent(run.runId)}/`;
+/** Build the ordered DrillSteps for one proving run, joining by its runId.
+ *  `tryEvidence` is the matching try's step-anchored artifacts (preferred for
+ *  labels) when a try carries this runId; the evidence dir pngs are the
+ *  fallback. Selection of the runId itself happens upstream (flowProvingRuns). */
+function buildSteps(
+  runId: string,
+  tryEvidence: FlowTry["evidence"] | undefined,
+  evDir: EvidenceDir | undefined,
+): { steps: DrillStep[]; hasEvidence: boolean } {
+  const base = `evidence/${encodeURIComponent(runId)}/`;
 
-  // Prefer the try's step-anchored evidence artifacts (image kind).
-  const images = run.evidence.filter((e) => e.kind === "image");
+  // Prefer the matching try's step-anchored evidence artifacts (image kind).
+  const images = (tryEvidence ?? []).filter((e) => e.kind === "image");
   if (images.length > 0) {
     const steps = [...images]
       .sort(byStepIndex((e) => e.stepIndex))
@@ -179,40 +194,63 @@ function byStepIndex<T>(key: (t: T) => number | null): (a: T, b: T) => number {
   };
 }
 
-/** Assemble one DrillRun from a chosen try, joining the evidence dir by runId. */
-function buildRun(inputs: SiteInputs, run: FlowTry, role: ProvingRole): DrillRun {
-  const evDir = (inputs.evidenceDirs as EvidenceDir[]).find((d) => d.scenario === run.runId);
-  const { steps, hasEvidence } = buildSteps(run, evDir);
-  const videoRel = evDir && evDir.video ? `evidence/${encodeURIComponent(run.runId)}/${encodeURIComponent(evDir.video)}` : null;
-  return { runId: run.runId, role, status: run.status, scenario: run.runId, steps, hasEvidence, videoRel };
+/**
+ * Assemble one DrillRun for a runId chosen upstream (from flowProvingRuns),
+ * joining the matching try (for richer step labels + its FlowVerdict status) and
+ * the evidence dir (both by runId). `fallbackStatus` is shown when no try
+ * carries this runId — selection no longer depends on a try existing.
+ */
+function buildRunById(
+  inputs: SiteInputs,
+  tries: FlowTry[],
+  runId: string,
+  role: ProvingRole,
+  fallbackStatus: string,
+): DrillRun {
+  const matchTry = findTryByRunId(tries, runId);
+  const evDir = (inputs.evidenceDirs as EvidenceDir[]).find((d) => d.scenario === runId);
+  const { steps, hasEvidence } = buildSteps(runId, matchTry?.evidence, evDir);
+  const videoRel = evDir && evDir.video ? `evidence/${encodeURIComponent(runId)}/${encodeURIComponent(evDir.video)}` : null;
+  return {
+    runId,
+    role,
+    status: matchTry?.status ?? fallbackStatus,
+    scenario: runId,
+    steps,
+    hasEvidence,
+    videoRel,
+  };
 }
 
 /**
  * Build the verdict-anchored drill for a flow, applying the proving-run rule.
- * Returns `null` when the flow has no proving run (no drill, no fabrication).
+ * The proving run(s) are selected from `adjudicated.flowProvingRuns[flowId]`
+ * (the verdict-row source), keyed by the flow's `flowStatus` — NOT from
+ * `tries[].status`. Returns `null` when the flow has no proving run (no drill,
+ * no fabrication).
  */
 export function buildFlowDrill(inputs: SiteInputs, flowId: string): FlowDrill | null {
   if (!flowId) return null;
   const status = readFlowStatus(inputs)?.[flowId];
   if (!status) return null;
 
+  const proving = readFlowProvingRuns(inputs)?.[flowId];
   const entry = findFlowEntry(inputs, flowId);
-  if (!entry) return null;
-  const tries = entry.tries;
+  const tries = entry?.tries ?? [];
 
   const runs: DrillRun[] = [];
   if (status === "satisfied") {
-    const t = lastTryWithStatus(tries, "pass");
-    if (t) runs.push(buildRun(inputs, t, "single"));
+    const runId = proving?.satisfiedRun;
+    if (runId) runs.push(buildRunById(inputs, tries, runId, "single", "pass"));
   } else if (status === "violated") {
-    const t = lastTryWithStatus(tries, "fail");
-    if (t) runs.push(buildRun(inputs, t, "single"));
+    const runId = proving?.violatedRun;
+    if (runId) runs.push(buildRunById(inputs, tries, runId, "single", "fail"));
   } else if (status === "contradictory") {
     // BOTH runs — the contradiction IS the finding; never hide a side.
-    const pass = lastTryWithStatus(tries, "pass");
-    const fail = lastTryWithStatus(tries, "fail");
-    if (pass) runs.push(buildRun(inputs, pass, "satisfied"));
-    if (fail) runs.push(buildRun(inputs, fail, "violated"));
+    const satRun = proving?.satisfiedRun;
+    const vioRun = proving?.violatedRun;
+    if (satRun) runs.push(buildRunById(inputs, tries, satRun, "satisfied", "pass"));
+    if (vioRun) runs.push(buildRunById(inputs, tries, vioRun, "violated", "fail"));
   }
   // blocked / not_adjudicated / excluded / unmapped → no proving run.
 

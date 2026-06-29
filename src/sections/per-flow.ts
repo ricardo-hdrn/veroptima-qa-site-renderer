@@ -11,10 +11,11 @@
  * (NOT scenario.flow_id), and render EVERY flow as a row carrying its STATUS
  * (the SAME `flowStatus` cut the body uses). For an ADJUDICATED flow
  * (satisfied / violated / contradictory) we REUSE `buildFlowDrill(flow.id, …)`
- * — the SAME deterministic proving-run rule (satisfied→last pass, violated→last
- * fail, contradictory→BOTH; `data-proving-run` == verdict runId; steps;
- * screenshots; no fabrication). not_adjudicated / excluded / blocked / unmapped
- * show their status but NO drill (we never invent evidence).
+ * — the SAME deterministic proving-run rule, now selecting the run from
+ * `adjudicated.flowProvingRuns` (the verdict-row source: satisfied→satisfiedRun,
+ * violated→violatedRun, contradictory→BOTH; `data-proving-run` == verdict runId;
+ * steps; screenshots; no fabrication). not_adjudicated / excluded / blocked /
+ * unmapped show their status but NO drill (we never invent evidence).
  *
  * So coverage is COMPLETE for every adjudicated flow, independent of whether a
  * §Casos scenario references it. The §Casos scenario drill stays as additive.

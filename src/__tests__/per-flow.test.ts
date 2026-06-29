@@ -14,9 +14,12 @@
  *      runId; the contradictory flow shows BOTH runs;
  *   3. a not_adjudicated / excluded flow shows status but NO drill;
  *   4. COVERAGE-COMPLETENESS: #adjudicated-drills == #adjudicated-flows
- *      (non-vacuous — proves completeness, not ≥1).
- *   + MUTATION (keep the old scenario.flow_id keying → drills < adjudicated)
- *     turns the completeness assertion RED. See the build report.
+ *      (non-vacuous — proves completeness, not ≥1). NON-VACUOUS for the new
+ *      source too: BUSCA-1 is satisfied with NO `pass` try (only an
+ *      `incomplete` row) but a flowProvingRuns.satisfiedRun — so it ONLY drills
+ *      because selection is flowProvingRuns-keyed, not tries[].status-keyed.
+ *   + MUTATION (revert selection to tries[].status) drops BUSCA-1's drill →
+ *     completeness 7 != 8 → RED. See the build report.
  */
 import { describe, expect, test } from "bun:test";
 
@@ -61,6 +64,14 @@ const FLOW_STATUS: Record<string, AdjudicatedFlowStatus> = {
   "BUSCA-EXC": "excluded",
 };
 
+// flowProvingRuns — the verdict-row source the drill selects from. Each
+// satisfied flow's satisfiedRun is its run; the contradictory flow carries BOTH.
+const FLOW_PROVING_RUNS: Record<string, { satisfiedRun?: string; violatedRun?: string }> = {
+  ...Object.fromEntries(SAT_IDS.map((id) => [id, { satisfiedRun: `run-${id}` }])),
+  "BUSCA-CPF": { satisfiedRun: "run-cpf-pass", violatedRun: "run-cpf-fail" },
+  // BUSCA-NADJ / BUSCA-EXC: no entry — not adjudicated, no proving run.
+};
+
 const ADJ: SiteAdjudicatedKpis = {
   noAdjudicatedData: false,
   completude: { verified: 8, addressable: 9, pct: 89 },
@@ -68,6 +79,7 @@ const ADJ: SiteAdjudicatedKpis = {
   bugsApp: { count: 0, flows: [] },
   verdictIntegrity: { count: 1, flows: ["BUSCA-CPF"] },
   flowStatus: FLOW_STATUS,
+  flowProvingRuns: FLOW_PROVING_RUNS,
 };
 
 function makeInputs(): AdjudicatedSiteInputs {
@@ -75,7 +87,16 @@ function makeInputs(): AdjudicatedSiteInputs {
     flowWithVerdict(
       id,
       `Fluxo ${id}`,
-      [{ runId: `run-${id}`, status: "pass", verdict: null, evidence: [imageEv(`run-${id}`, 1, "open")] }],
+      // BUSCA-1 is satisfied but carries NO `pass` try (only `incomplete`) — it
+      // drills ONLY because selection is flowProvingRuns-keyed. The rest pass.
+      [
+        {
+          runId: `run-${id}`,
+          status: id === "BUSCA-1" ? "incomplete" : "pass",
+          verdict: null,
+          evidence: [imageEv(`run-${id}`, 1, "open")],
+        },
+      ],
       `run-${id}`,
     ),
   );

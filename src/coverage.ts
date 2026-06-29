@@ -232,6 +232,16 @@ export function readFlowStatus(
   return readAdjudicated(inputs)?.flowStatus;
 }
 
+/** Read the per-goal PROVING-RUN map (`flowId → { satisfiedRun?, violatedRun? }`)
+ *  — the single source for the drill's run selection (same verdict rows that
+ *  classify `flowStatus`). `undefined` when the host omits it (older contract).
+ *  Defensive — the runtime object carries it when emitted. */
+export function readFlowProvingRuns(
+  inputs: SiteInputs,
+): Record<string, { satisfiedRun?: string; violatedRun?: string }> | undefined {
+  return readAdjudicated(inputs)?.flowProvingRuns;
+}
+
 /** The 5-cut: a per-goal verdict status → a body CoverStatus. */
 export function flowStatusToCut(s: AdjudicatedFlowStatus): CoverStatus {
   switch (s) {

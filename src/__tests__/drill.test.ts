@@ -2,19 +2,22 @@
  * Verdict-anchored evidence DRILL — proving-run selection + single-source.
  *
  * The drill replaces the old flat per-scenario carousel. Each per-flow status
- * cell drills to the RUN that PROVED its verdict → that run's ordered steps →
- * step-anchored screenshots. These tests pin:
+ * cell drills to the RUN that PROVED its verdict — the run SELECTED from
+ * `adjudicated.flowProvingRuns` (the verdict-row source), keyed by `flowStatus`
+ * — → that run's ordered steps → step-anchored screenshots. These tests pin:
  *
- *   1. satisfied  → the LAST `pass` try's runId (drill === that runId), steps +
- *      screenshots present.
- *   2. violated   → the LAST `fail` try's runId.
- *   3. contradictory → BOTH the last-pass AND the last-fail run, side by side.
- *   4. no proving run (not_adjudicated/excluded/unmapped/no try) → NO drill.
+ *   1. satisfied  → flowProvingRuns[F].satisfiedRun (drill === that runId),
+ *      steps + screenshots present.
+ *   2. violated   → flowProvingRuns[F].violatedRun.
+ *   3. contradictory → BOTH satisfiedRun AND violatedRun, side by side.
+ *   4. no proving run (not_adjudicated/excluded/unmapped/no entry) → NO drill.
  *   5. single-source: the drill's runId === the verdict's runId.
- *   + MUTATION 1 (pick a non-proving run → data-proving-run != verdict runId)
- *     and MUTATION 2 (contradictory shows only one run) are exercised by
- *     temporarily editing drill.ts; both turn this suite RED. See the build
- *     report for the observed failures.
+ *   6. REGRESSION: a satisfied flow whose tries carry NO `pass` row but whose
+ *      flowProvingRuns.satisfiedRun is set STILL drills — selection no longer
+ *      depends on tries[].status (the bug that rendered 0 drills on the real
+ *      store while the % said 100% Coberto).
+ *   + MUTATION (revert selection to tries[].status) turns the no-pass-try
+ *     regression + the completeness count RED; see the build report.
  */
 import { describe, expect, test } from "bun:test";
 
@@ -60,6 +63,16 @@ const FLOW_STATUS: Record<string, AdjudicatedFlowStatus> = {
   "FLOW-NADJ": "not_adjudicated",
 };
 
+// flowProvingRuns — the verdict-row source the drill now selects from. Emitted
+// from the SAME rows that classify flowStatus: satisfied→the satisfying run,
+// violated→the violating run, contradictory→BOTH. Single source for selection.
+const FLOW_PROVING_RUNS: Record<string, { satisfiedRun?: string; violatedRun?: string }> = {
+  "FLOW-SAT": { satisfiedRun: "run-s2" },
+  "FLOW-VIO": { violatedRun: "run-v1" },
+  "FLOW-FLIP": { satisfiedRun: "run-c-pass", violatedRun: "run-c-fail" },
+  // FLOW-NADJ: no entry — not adjudicated, no proving run.
+};
+
 const ADJ: SiteAdjudicatedKpis = {
   noAdjudicatedData: false,
   completude: { verified: 1, addressable: 4, pct: 25 },
@@ -67,6 +80,7 @@ const ADJ: SiteAdjudicatedKpis = {
   bugsApp: { count: 1, flows: ["FLOW-VIO"] },
   verdictIntegrity: { count: 1, flows: ["FLOW-FLIP"] },
   flowStatus: FLOW_STATUS,
+  flowProvingRuns: FLOW_PROVING_RUNS,
 };
 
 function makeInputs(): AdjudicatedSiteInputs {
@@ -155,12 +169,12 @@ function verdictRunId(inputs: AdjudicatedSiteInputs, flowId: string): string {
 }
 
 describe("drill — proving-run selection", () => {
-  test("satisfied → the LAST pass try's runId, with steps + screenshots", () => {
+  test("satisfied → flowProvingRuns.satisfiedRun, with steps + screenshots", () => {
     const inputs = makeInputs();
     const drill = buildFlowDrill(inputs, "FLOW-SAT");
     expect(drill).not.toBeNull();
     expect(drill!.runs.length).toBe(1);
-    // LAST pass (run-s2), NOT the earlier run-s1 pass.
+    // The run the verdict row carries (flowProvingRuns.satisfiedRun = run-s2).
     expect(drill!.runs[0]!.runId).toBe("run-s2");
     // Steps from the try's step-anchored evidence, ordered.
     expect(drill!.runs[0]!.steps.map((s) => s.stepIndex)).toEqual([1, 2]);
@@ -175,7 +189,7 @@ describe("drill — proving-run selection", () => {
     expect(html).toContain("evidence/run-s2/");
   });
 
-  test("violated → the LAST fail try's runId", () => {
+  test("violated → flowProvingRuns.violatedRun", () => {
     const inputs = makeInputs();
     const drill = buildFlowDrill(inputs, "FLOW-VIO");
     expect(drill!.runs.length).toBe(1);
@@ -183,7 +197,27 @@ describe("drill — proving-run selection", () => {
     expect(renderFlowDrill(inputs, "FLOW-VIO")).toContain('data-proving-run="run-v1"');
   });
 
-  test("contradictory → BOTH last-pass AND last-fail, side by side (never one hidden)", () => {
+  test("REGRESSION: satisfied flow with NO `pass` try but satisfiedRun set STILL drills", () => {
+    const inputs = makeInputs();
+    // Strip EVERY pass status from FLOW-SAT's tries — the old tries[].status
+    // selection would now find no `pass` try and render NO drill (the real-store
+    // bug: 100% Coberto, 0 drills). flowProvingRuns.satisfiedRun is untouched.
+    const fwv = inputs.flowsWithVerdicts.find(
+      (f) => String(((f as Record<string, unknown>)["flow"] as Record<string, unknown>)["id"]) === "FLOW-SAT",
+    )! as Record<string, unknown>;
+    (fwv["tries"] as Try[]).forEach((t) => (t.status = "incomplete"));
+
+    const drill = buildFlowDrill(inputs, "FLOW-SAT");
+    // STILL drills — selection comes from flowProvingRuns, not tries[].status.
+    expect(drill).not.toBeNull();
+    expect(drill!.runs.length).toBe(1);
+    expect(drill!.runs[0]!.runId).toBe("run-s2");
+    // Step evidence still joins from the matching try / evidence dir by runId.
+    expect(drill!.runs[0]!.hasEvidence).toBe(true);
+    expect(renderFlowDrill(inputs, "FLOW-SAT")).toContain('data-proving-run="run-s2"');
+  });
+
+  test("contradictory → BOTH satisfiedRun AND violatedRun, side by side (never one hidden)", () => {
     const inputs = makeInputs();
     const drill = buildFlowDrill(inputs, "FLOW-FLIP");
     expect(drill!.runs.length).toBe(2);

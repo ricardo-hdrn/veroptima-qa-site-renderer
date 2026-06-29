@@ -75,6 +75,21 @@ export interface SiteAdjudicatedKpis {
    * defensively. NOT the pass/incomplete/fail FlowVerdict (a different vocab).
    */
   flowStatus?: Record<string, AdjudicatedFlowStatus>;
+  /**
+   * Per-goal PROVING-RUN map (`flowId → { satisfiedRun?, violatedRun? }`). The
+   * SINGLE SOURCE for the evidence drill's run selection: the host emits this
+   * from the SAME verdict rows that classify `flowStatus` (the run that produced
+   * the satisfied / violated ROW), so the drill's `data-proving-run` EQUALS the
+   * run the % source carries. The drill picks:
+   *   - satisfied      → satisfiedRun
+   *   - violated       → violatedRun
+   *   - contradictory  → BOTH (the contradiction IS the finding)
+   * This REPLACES the old `tries[].status` selection, which used the
+   * pass/incomplete/fail FlowVerdict vocab and DIVERGED from `flowStatus` (a
+   * satisfied flow whose tries carried no `pass` row rendered 0 drills on the
+   * real store). Optional: an older host may omit it — read defensively.
+   */
+  flowProvingRuns?: Record<string, { satisfiedRun?: string; violatedRun?: string }>;
 }
 
 /** SiteInputs widened with the (host-emitted) optional grounded KPIs. */
