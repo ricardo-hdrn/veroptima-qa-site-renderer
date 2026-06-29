@@ -20,9 +20,29 @@
  *
  * AC status: max-of-decisions-citing-this-ac via `cite.ac_id`.
  */
-import type { SiteInputs } from "./types.js";
+import { readAdjudicated, type AdjudicatedFlowStatus, type SiteInputs } from "./types.js";
 
-export type CoverStatus = "ok" | "partial" | "blocked" | "gap" | "bug";
+/**
+ * The body status vocabulary. The first five are the synth (design-intent)
+ * cuts. The last four are GROUNDED-only, derived from the per-goal verdict map
+ * (`adjudicated.flowStatus`) via the item→flow join:
+ *   - failed         — a violated verdict                (Falhou)
+ *   - contradictory  — a contradictory/flip goal         (integrity note)
+ *   - unmapped       — item has NO flow ref, OR its flow id is absent from the
+ *                      verdict map → SEM MAPEAMENTO (the loud honesty gap;
+ *                      NEVER silently bucketed as "Não executado")
+ *   - misto          — item joins MULTIPLE flows with CONFLICTING statuses
+ */
+export type CoverStatus =
+  | "ok"
+  | "partial"
+  | "blocked"
+  | "gap"
+  | "bug"
+  | "failed"
+  | "contradictory"
+  | "unmapped"
+  | "misto";
 
 const STATUS_RANK: Record<CoverStatus, number> = {
   ok: 4,
@@ -30,6 +50,38 @@ const STATUS_RANK: Record<CoverStatus, number> = {
   blocked: 2,
   gap: 1,
   bug: 0,
+  // Grounded-only cuts never participate in the synth `mergeStatus` precedence
+  // (they are produced only by the grounded join below); ranked low for safety.
+  failed: 0,
+  contradictory: 1,
+  misto: 1,
+  unmapped: 0,
+};
+
+/** Visible label + pill class for every status — SINGLE SOURCE so the human
+ *  label and the machine `data-v` can never diverge. */
+export const COVER_LABEL: Record<CoverStatus, string> = {
+  ok: "Coberto",
+  partial: "Parcial",
+  blocked: "Bloqueado",
+  gap: "Não executado",
+  bug: "Bug",
+  failed: "Falhou",
+  contradictory: "Integridade",
+  unmapped: "Sem mapeamento",
+  misto: "Misto",
+};
+
+export const COVER_CLASS: Record<CoverStatus, string> = {
+  ok: "pill-ok",
+  partial: "pill-partial",
+  blocked: "pill-blocked",
+  gap: "pill-gap",
+  bug: "pill-bug",
+  failed: "pill-failed",
+  contradictory: "pill-contradictory",
+  unmapped: "pill-unmapped",
+  misto: "pill-misto",
 };
 
 export function mergeStatus(
@@ -152,6 +204,177 @@ export function buildDecisionStatusMap(inputs: SiteInputs): Map<string, CoverSta
       }
     }
     out.set(id, acc ?? "gap");
+  }
+  return out;
+}
+
+// ── GROUNDED path — per-item status from the per-goal verdict map ────────────
+//
+// The body's execution truth. Each item's status is derived ONLY from
+// `adjudicated.flowStatus` (the SAME source the headline aggregates use),
+// joined item → flow(s). The synth `plan.status` maps above stay available for
+// the labeled, SUBORDINATE "design-intent" view only — never the result.
+
+/** Read the per-goal adjudicated status map; `undefined` when the host omits it
+ *  (older contract). Defensive — the runtime object carries it when emitted. */
+export function readFlowStatus(
+  inputs: SiteInputs,
+): Record<string, AdjudicatedFlowStatus> | undefined {
+  return readAdjudicated(inputs)?.flowStatus;
+}
+
+/** The 5-cut: a per-goal verdict status → a body CoverStatus. */
+export function flowStatusToCut(s: AdjudicatedFlowStatus): CoverStatus {
+  switch (s) {
+    case "satisfied":
+      return "ok"; // Coberto
+    case "violated":
+      return "failed"; // Falhou
+    case "blocked":
+      return "blocked"; // Bloqueado
+    case "contradictory":
+      return "contradictory"; // integrity note (não-é-bug)
+    case "not_adjudicated":
+      return "gap"; // Não executado (mappable, no adjudicating verdict)
+    default:
+      return "unmapped";
+  }
+}
+
+/** One flow id → its grounded cut.
+ *   - no ref (empty id)               → unmapped (no flow to join)
+ *   - map absent entirely (no source) → gap      (não executado; not loud-gap)
+ *   - map present but flow absent     → unmapped (SEM MAPEAMENTO — the loud gap)
+ */
+function lookupFlowCut(
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+  flowId: string,
+): CoverStatus {
+  if (flowId === "") return "unmapped";
+  if (!flowStatus) return "gap";
+  const s = flowStatus[flowId];
+  if (s === undefined) return "unmapped";
+  return flowStatusToCut(s);
+}
+
+/** Aggregate the resolved cuts for an item joined to ≥1 flow:
+ *   - no resolved cut → unmapped (SEM MAPEAMENTO)
+ *   - one distinct    → that cut
+ *   - conflicting     → misto (NEVER a fabricated single status)
+ */
+function aggregateGrounded(cuts: CoverStatus[]): CoverStatus {
+  if (cuts.length === 0) return "unmapped";
+  const distinct = new Set(cuts);
+  if (distinct.size === 1) return [...distinct][0]!;
+  return "misto";
+}
+
+/** scenario.flow_id → flowStatus. Absent/unknown flow id → SEM MAPEAMENTO. */
+export function buildGroundedScenarioStatusMap(
+  inputs: SiteInputs,
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): Map<string, CoverStatus> {
+  const out = new Map<string, CoverStatus>();
+  for (const sc of inputs.scenarios) {
+    const id = String(sc["id"] ?? "");
+    const flowId = sc["flow_id"] != null ? String(sc["flow_id"]) : "";
+    out.set(id, lookupFlowCut(flowStatus, flowId));
+  }
+  return out;
+}
+
+/** plan.flow_ids (authoritative) → aggregate. `target_test_flow_ids` are
+ *  ScenarioBlock ids, NOT flow ids — deliberately NOT used here. */
+export function buildGroundedPlanStatusMap(
+  inputs: SiteInputs,
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): Map<string, CoverStatus> {
+  const out = new Map<string, CoverStatus>();
+  for (const p of inputs.plans) {
+    const id = String(p["id"] ?? "");
+    const flowIds = Array.isArray(p["flow_ids"])
+      ? (p["flow_ids"] as unknown[]).map(String)
+      : [];
+    if (flowIds.length === 0) {
+      out.set(id, "unmapped");
+      continue;
+    }
+    out.set(id, aggregateGrounded(flowIds.map((f) => lookupFlowCut(flowStatus, f))));
+  }
+  return out;
+}
+
+/** Linked scenario ids for a decision — the EXISTING coverage linking reused:
+ *  `evidence_scenario_ids` preferred, else code-cite overlap. */
+export function linkedScenarioIds(
+  d: Record<string, unknown>,
+  inputs: SiteInputs,
+): string[] {
+  const explicit = Array.isArray(d["evidence_scenario_ids"])
+    ? (d["evidence_scenario_ids"] as unknown[]).map(String)
+    : [];
+  if (explicit.length) return explicit;
+  const out: string[] = [];
+  const dCites = Array.isArray(d["cites"]) ? (d["cites"] as Array<Record<string, unknown>>) : [];
+  for (const sc of inputs.scenarios) {
+    const scCites = Array.isArray(sc["cites"]) ? (sc["cites"] as Array<Record<string, unknown>>) : [];
+    if (dCites.some((dc) => scCites.some((s) => citesLinked(dc, s)))) {
+      out.push(String(sc["id"] ?? ""));
+    }
+  }
+  return out;
+}
+
+/** TRANSITIVE: decision → linked scenario(s) → scenario.flow_id → flowStatus.
+ *  Resolves to ONE flow / consistent set → that status; conflicting → misto; no
+ *  clean path → SEM MAPEAMENTO. */
+export function buildGroundedDecisionStatusMap(
+  inputs: SiteInputs,
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): Map<string, CoverStatus> {
+  const scenFlowId = new Map<string, string>();
+  for (const sc of inputs.scenarios) {
+    const id = String(sc["id"] ?? "");
+    const f = sc["flow_id"] != null ? String(sc["flow_id"]) : "";
+    if (f) scenFlowId.set(id, f);
+  }
+  const out = new Map<string, CoverStatus>();
+  for (const d of inputs.decisions) {
+    const id = String(d["id"] ?? "");
+    const cuts: CoverStatus[] = [];
+    for (const sid of linkedScenarioIds(d, inputs)) {
+      const f = scenFlowId.get(sid);
+      if (f) cuts.push(lookupFlowCut(flowStatus, f));
+    }
+    out.set(id, aggregateGrounded(cuts));
+  }
+  return out;
+}
+
+/** TRANSITIVE: AC → decision.cites[].ac_id → grounded decision status. Decisions
+ *  that resolve to no flow (unmapped) contribute nothing unless ALL do. */
+export function buildGroundedAcStatusMap(
+  inputs: SiteInputs,
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): Map<string, CoverStatus> {
+  const decStatus = buildGroundedDecisionStatusMap(inputs, flowStatus);
+  const byAc = new Map<string, CoverStatus[]>();
+  for (const d of inputs.decisions) {
+    const did = String(d["id"] ?? "");
+    const dCut = decStatus.get(did) ?? "unmapped";
+    const cites = Array.isArray(d["cites"]) ? (d["cites"] as Array<Record<string, unknown>>) : [];
+    for (const c of cites) {
+      const acId = String(c["ac_id"] ?? "");
+      if (!acId) continue;
+      const arr = byAc.get(acId) ?? [];
+      arr.push(dCut);
+      byAc.set(acId, arr);
+    }
+  }
+  const out = new Map<string, CoverStatus>();
+  for (const [ac, cuts] of byAc) {
+    const mapped = cuts.filter((c) => c !== "unmapped");
+    out.set(ac, mapped.length ? aggregateGrounded(mapped) : "unmapped");
   }
   return out;
 }

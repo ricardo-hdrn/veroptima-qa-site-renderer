@@ -5,17 +5,18 @@
  * Status derived via the shared coverage helper so this table matches the
  * §Completude heatmap "Por decisão" totals row-for-row.
  */
-import { buildDecisionStatusMap, type CoverStatus } from "../coverage.js";
+import {
+  buildGroundedDecisionStatusMap,
+  COVER_LABEL,
+  type CoverStatus,
+  readFlowStatus,
+} from "../coverage.js";
 import { esc } from "../escape.js";
 import type { SiteInputs } from "../types.js";
 
-const PILL_LABEL: Record<CoverStatus, string> = {
-  ok: "Coberto",
-  partial: "Parcial",
-  gap: "Não exec.",
-  blocked: "Bloqueado",
-  bug: "Bug",
-};
+// Single-sourced from the coverage module — the label and the `data-v` cannot
+// diverge.
+const PILL_LABEL: Record<CoverStatus, string> = COVER_LABEL;
 
 export function renderDecisions(inputs: SiteInputs): string {
   if (inputs.decisions.length === 0) {
@@ -25,7 +26,10 @@ export function renderDecisions(inputs: SiteInputs): string {
   <p class="faint">(sem decisões registradas)</p>
 </section>`;
   }
-  const decStatus = buildDecisionStatusMap(inputs);
+  // GROUNDED: decision status is the TRANSITIVE join decision → linked
+  // scenario(s) → scenario.flow_id → per-goal verdict map. A decision with no
+  // resolvable flow renders SEM MAPEAMENTO (loud gap), never silent "Não exec.".
+  const decStatus = buildGroundedDecisionStatusMap(inputs, readFlowStatus(inputs));
   const rows = inputs.decisions
     .map((d) => {
       const id = String(d["id"] ?? "?");
@@ -34,7 +38,7 @@ export function renderDecisions(inputs: SiteInputs): string {
       const section = String(d["section"] ?? "");
       const text = ifT && thenT ? `${ifT} ⇒ ${thenT}` : String(d["title"] ?? d["if_then_text"] ?? "");
       const persists = d["touches_persistence"] === true;
-      const status = decStatus.get(id) ?? "gap";
+      const status = decStatus.get(id) ?? "unmapped";
       const evidence = Array.isArray(d["evidence_scenario_ids"])
         ? (d["evidence_scenario_ids"] as unknown[]).map((x) => String(x))
         : [];
@@ -58,10 +62,10 @@ export function renderDecisions(inputs: SiteInputs): string {
   <div class="fbar" id="covfilters">
     <button class="fbtn active" data-f="all">Todos</button>
     <button class="fbtn" data-f="ok">✓ Coberto</button>
-    <button class="fbtn" data-f="partial">◑ Parcial</button>
-    <button class="fbtn" data-f="gap">⬜ Não exec.</button>
+    <button class="fbtn" data-f="failed">✗ Falhou</button>
+    <button class="fbtn" data-f="gap">⬜ Não executado</button>
     <button class="fbtn" data-f="blocked">🔒 Bloqueado</button>
-    <button class="fbtn" data-f="bug">🐞 Bugs</button>
+    <button class="fbtn" data-f="unmapped">❔ Sem mapeamento</button>
   </div>
   <table class="data-table">
     <thead><tr><th>ID</th><th>Seção</th><th>IF ⇒ THEN</th><th>Status</th><th>Persistência</th><th>Cenários</th></tr></thead>

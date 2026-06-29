@@ -22,7 +22,11 @@ import { describe, expect, test } from "bun:test";
 import type { SiteInputs } from "@qa-expert/renderer-adapter-contract";
 
 import { renderSite } from "../render.js";
-import type { AdjudicatedSiteInputs, SiteAdjudicatedKpis } from "../types.js";
+import type {
+  AdjudicatedFlowStatus,
+  AdjudicatedSiteInputs,
+  SiteAdjudicatedKpis,
+} from "../types.js";
 
 const FIXED_TIME = "2026-06-09T12:00:00Z";
 
@@ -180,14 +184,21 @@ describe("renderSite — all 9 sections present", () => {
 });
 
 describe("renderSite — coverage consistency (§Cobertura table ↔ §Painel heatmap)", () => {
-  /** Pull the rendered "Por decisão" heatmap table's totrow Compl. % and
-   *  the §Cobertura table's per-status counts. They must agree on the
-   *  decision-status distribution — they come from the same coverage helper. */
+  /** Both the §Cobertura decision table and the §Painel "Por decisão" heatmap
+   *  derive decision status from the SAME GROUNDED coverage helper. Each surface
+   *  single-sources its visible status from a `data-v` attribute; the per-status
+   *  tallies must reconcile row-for-row. (Grounded reconciliation: both read the
+   *  per-goal verdict map, never two different joins.) */
   test("decision-status tally matches between cobertura table rows and heatmap totrow", async () => {
     const out = await renderSite(makeInputs());
 
-    // §Cobertura Detalhada table rows: count by data-v attribute
-    const covRowMatches = out.html.matchAll(/<tr data-v="([^"]+)">/g);
+    // §Cobertura Detalhada table rows: count by data-v attribute. Scope to the
+    // §cobertura section so we don't also pick up the heatmap's own data-v rows.
+    const covSection = out.html.match(
+      /<section id="cobertura"[\s\S]*?<\/section>/,
+    );
+    expect(covSection).not.toBeNull();
+    const covRowMatches = covSection![0]!.matchAll(/<tr data-v="([^"]+)">/g);
     const covTally: Record<string, number> = {};
     for (const m of covRowMatches) covTally[m[1]!] = (covTally[m[1]!] || 0) + 1;
 
@@ -200,24 +211,18 @@ describe("renderSite — coverage consistency (§Cobertura table ↔ §Painel he
     const decisaoHtml = data["decisao"]!;
     expect(decisaoHtml).toBeDefined();
 
-    // Heatmap total row's count per status = sum of cells in that column.
-    // We pull the totrow's <td class="cell"><b>N</b></td> cells; their order
-    // matches STATUS_CUTS = [ok, partial, gap, blocked, bug].
-    const totrow = decisaoHtml.match(/<tr class="totrow">[\s\S]*?<\/tr>/);
-    expect(totrow).not.toBeNull();
-    const totalCells = [...totrow![0]!.matchAll(/<td class="cell"><b>(\d+)<\/b><\/td>/g)].map((m) =>
-      parseInt(m[1]!, 10),
-    );
-    // Five cuts: ok, partial, gap, blocked, bug.
-    expect(totalCells.length).toBe(5);
-    const [ok, partial, gap, blocked, bug] = totalCells;
+    // Heatmap "Por decisão" per-row data-v tally (the body status, single-sourced).
+    const heatTally: Record<string, number> = {};
+    for (const m of decisaoHtml.matchAll(/<tr data-v="([^"]+)">/g))
+      heatTally[m[1]!] = (heatTally[m[1]!] || 0) + 1;
 
-    // Tallies match between the two surfaces.
-    expect(covTally["ok"] ?? 0).toBe(ok!);
-    expect(covTally["partial"] ?? 0).toBe(partial!);
-    expect(covTally["gap"] ?? 0).toBe(gap!);
-    expect(covTally["blocked"] ?? 0).toBe(blocked!);
-    expect(covTally["bug"] ?? 0).toBe(bug!);
+    // Same number of decisions, and the per-status distribution reconciles.
+    expect(Object.values(covTally).reduce((a, b) => a + b, 0)).toBe(
+      Object.values(heatTally).reduce((a, b) => a + b, 0),
+    );
+    for (const k of new Set([...Object.keys(covTally), ...Object.keys(heatTally)])) {
+      expect(covTally[k] ?? 0).toBe(heatTally[k] ?? 0);
+    }
   });
 });
 
@@ -309,6 +314,151 @@ describe("renderSite — grounded adjudicated result is the headline", () => {
     expect(out.html).toContain('data-raw-findings="bug"');
     // The adjudicated bugsApp result lives on the grounded card, separate.
     expect(out.html).toContain('data-grounded-bugsapp="0"');
+  });
+});
+
+// ── GROUNDED BODY (per-item status from the per-goal verdict map) ────────────
+//
+// A busca-shaped fixture: a satisfied flow, a violated flow, a not_adjudicated
+// flow, plus two UNMAPPABLE scenarios (one with no flow_id, one whose flow_id
+// is absent from the verdict map). The BODY must render each item's REAL status
+// joined item → flow → flowStatus, with Sem mapeamento as a distinct loud gap.
+
+const BUSCA_FLOW_STATUS: Record<string, AdjudicatedFlowStatus> = {
+  "FLOW-SAT": "satisfied",
+  "FLOW-VIO": "violated",
+  "FLOW-NADJ": "not_adjudicated",
+};
+
+const BUSCA_ADJ: SiteAdjudicatedKpis = {
+  noAdjudicatedData: false,
+  completude: { verified: 1, addressable: 3, pct: 33 },
+  conformidade: { approved: 1, addressable: 3, pct: 33 },
+  bugsApp: { count: 1, flows: ["FLOW-VIO"] },
+  verdictIntegrity: { count: 0, flows: [] },
+  flowStatus: BUSCA_FLOW_STATUS,
+};
+
+function makeBuscaInputs(): AdjudicatedSiteInputs {
+  return {
+    source: {
+      sessionDir: "/tmp/busca-session",
+      capabilityId: "busca",
+      featureDir: "/tmp/busca-session/features/busca",
+    },
+    feature: {
+      id: "busca",
+      name: "Busca",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-02T00:00:00Z",
+    },
+    specs: [],
+    storiesAcs: [],
+    synths: { endpoints: [], entities: [], tables: [], form_components: [], form_conditionals: [] },
+    decisions: [
+      // Linked to a satisfied-flow scenario via evidence_scenario_ids → ok.
+      { id: "D-SAT", section: "busca", evidence_scenario_ids: ["SC-SAT"], cites: [] },
+      // No resolvable flow → SEM MAPEAMENTO (loud gap).
+      { id: "D-NONE", section: "outros", cites: [{ kind: "doc", ac_id: "AC-X" }] },
+    ],
+    scenarios: [
+      { id: "SC-SAT", name: "Busca satisfeita", flow_id: "FLOW-SAT", cites: [] },
+      { id: "SC-VIO", name: "Busca violada", flow_id: "FLOW-VIO", cites: [] },
+      { id: "SC-NADJ", name: "Busca não adjudicada", flow_id: "FLOW-NADJ", cites: [] },
+      // UNMAPPABLE: no flow_id at all.
+      { id: "SC-ORPHAN", name: "Cenário sem fluxo", cites: [] },
+      // UNMAPPABLE: flow_id absent from the verdict map.
+      { id: "SC-GHOST", name: "Cenário fluxo fantasma", flow_id: "FLOW-GHOST", cites: [] },
+    ],
+    plans: [
+      {
+        id: "PLAN-SAT",
+        name: "Plano busca",
+        status: "ticked",
+        target_test_flow_ids: ["SC-SAT", "SC-VIO", "SC-NADJ", "SC-ORPHAN", "SC-GHOST"],
+        flow_ids: ["FLOW-SAT"],
+      },
+    ],
+    findings: [],
+    checkpoints: { A: null, B: null, C: null },
+    evidenceDirs: [],
+    runflowDir: null,
+    flowsWithVerdicts: [],
+    unattachedVerdicts: [],
+    builtAtIso: FIXED_TIME,
+    locale: "pt-BR",
+    adjudicated: BUSCA_ADJ,
+  };
+}
+
+/** Pull the `data-v` of the case pill (details.sc) for a given scenario id. */
+function casePillStatus(html: string, scenarioId: string): string | null {
+  const re = new RegExp(
+    `<details class="sc" data-v="([^"]+)">\\s*<summary>\\s*<span class="scid">${scenarioId}</span>`,
+  );
+  const m = html.match(re);
+  return m ? m[1]! : null;
+}
+
+describe("renderSite — grounded BODY (per-item status from flowStatus)", () => {
+  test("case pills render the REAL per-goal status; Sem mapeamento is distinct", async () => {
+    const out = await renderSite(makeBuscaInputs());
+
+    // satisfied → Coberto (ok); violated → Falhou (failed); not_adjudicated → gap.
+    expect(casePillStatus(out.html, "SC-SAT")).toBe("ok");
+    expect(casePillStatus(out.html, "SC-VIO")).toBe("failed");
+    expect(casePillStatus(out.html, "SC-NADJ")).toBe("gap");
+
+    // UNMAPPABLE items render the loud gap, NEVER "Não executado" (gap).
+    expect(casePillStatus(out.html, "SC-ORPHAN")).toBe("unmapped");
+    expect(casePillStatus(out.html, "SC-GHOST")).toBe("unmapped");
+
+    // The loud-gap label is visibly present and distinct from Não executado.
+    expect(out.html).toContain("Sem mapeamento");
+    expect(out.html).toContain("Falhou");
+    expect(out.html).toContain("Coberto");
+  });
+
+  test("grounded distribution bar reconciles to the per-goal verdict map", async () => {
+    const out = await renderSite(makeBuscaInputs());
+
+    // The grounded distribution legend carries data-v per cut, single-sourced
+    // count. Tally the flowStatus map directly and compare.
+    const expected: Record<string, number> = {};
+    for (const s of Object.values(BUSCA_FLOW_STATUS)) {
+      const cut = s === "satisfied" ? "ok" : s === "violated" ? "failed" : "gap";
+      expected[cut] = (expected[cut] ?? 0) + 1;
+    }
+    for (const [cut, n] of Object.entries(expected)) {
+      // <span data-v="ok"><i ...></i><b>1</b> Coberto</span>
+      const re = new RegExp(`<span data-v="${cut}"><i[^>]*></i><b>(\\d+)</b>`);
+      const m = out.html.match(re);
+      expect(m).not.toBeNull();
+      expect(parseInt(m![1]!, 10)).toBe(n);
+    }
+  });
+
+  test("the synth design-intent block is present and labeled subordinate", async () => {
+    const out = await renderSite(makeBuscaInputs());
+    expect(out.html).toContain("Síntese (intenção de design) — não é o resultado medido");
+    // The grounded execution body is the primary surface above it.
+    expect(out.html).toContain('data-grounded-body="1"');
+    expect(out.html).toContain("Cobertura de execução");
+  });
+
+  test("TRANSITIVE decision join: linked-to-satisfied → Coberto; no flow → Sem mapeamento", async () => {
+    const out = await renderSite(makeBuscaInputs());
+    // §Cobertura decision rows carry data-v from the grounded transitive join.
+    expect(out.html).toMatch(/<tr data-v="ok">\s*<td class="mono">D-SAT<\/td>/);
+    expect(out.html).toMatch(/<tr data-v="unmapped">\s*<td class="mono">D-NONE<\/td>/);
+  });
+
+  test("MUTATION GUARD: an unmappable item is NOT bucketed as Não executado (gap)", async () => {
+    const out = await renderSite(makeBuscaInputs());
+    // If a section silently mapped unmappable → gap, SC-ORPHAN would read "gap".
+    // The honesty guard requires it to be the distinct "unmapped" state.
+    expect(casePillStatus(out.html, "SC-ORPHAN")).not.toBe("gap");
+    expect(casePillStatus(out.html, "SC-ORPHAN")).toBe("unmapped");
   });
 });
 

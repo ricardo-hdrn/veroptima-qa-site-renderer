@@ -14,14 +14,24 @@
  * Tab: visao.
  */
 import {
-  buildAcStatusMap,
   buildDecisionStatusMap,
-  buildScenarioStatusMap,
+  buildGroundedAcStatusMap,
+  buildGroundedDecisionStatusMap,
+  buildGroundedPlanStatusMap,
+  buildGroundedScenarioStatusMap,
+  COVER_LABEL,
   type CoverStatus,
+  flowStatusToCut,
   planStatusToCut,
+  readFlowStatus,
 } from "../coverage.js";
 import { esc } from "../escape.js";
-import { readAdjudicated, type SiteAdjudicatedKpis, type SiteInputs } from "../types.js";
+import {
+  type AdjudicatedFlowStatus,
+  readAdjudicated,
+  type SiteAdjudicatedKpis,
+  type SiteInputs,
+} from "../types.js";
 
 type StatusKey = CoverStatus;
 
@@ -32,7 +42,21 @@ interface StatusCut {
   bgVar: string;
 }
 
-const STATUS_CUTS: ReadonlyArray<StatusCut> = [
+/** GROUNDED columns — the execution-truth vocabulary, derived from the per-goal
+ *  verdict map. Labels are single-sourced from COVER_LABEL. Sem mapeamento is a
+ *  distinct, loud column (never folded into Não executado). */
+const GROUNDED_CUTS: ReadonlyArray<StatusCut> = [
+  { key: "ok", label: COVER_LABEL.ok, sym: "✓", bgVar: "--ok" },
+  { key: "failed", label: COVER_LABEL.failed, sym: "✗", bgVar: "--bug" },
+  { key: "gap", label: COVER_LABEL.gap, sym: "⬜", bgVar: "--gap" },
+  { key: "blocked", label: COVER_LABEL.blocked, sym: "🔒", bgVar: "--blocked" },
+  { key: "misto", label: COVER_LABEL.misto, sym: "◑", bgVar: "--partial" },
+  { key: "contradictory", label: COVER_LABEL.contradictory, sym: "⚠", bgVar: "--po" },
+  { key: "unmapped", label: COVER_LABEL.unmapped, sym: "❔", bgVar: "--unmapped" },
+];
+
+/** SYNTH (design-intent) cuts — used ONLY by the subordinate distribution. */
+const SYNTH_CUTS: ReadonlyArray<StatusCut> = [
   { key: "ok", label: "Coberto", sym: "✓", bgVar: "--ok" },
   { key: "partial", label: "Parcial", sym: "◑", bgVar: "--partial" },
   { key: "gap", label: "Não exec.", sym: "⬜", bgVar: "--gap" },
@@ -40,144 +64,164 @@ const STATUS_CUTS: ReadonlyArray<StatusCut> = [
   { key: "bug", label: "Bug", sym: "🐞", bgVar: "--bug" },
 ];
 
-interface HeatGroup {
+interface GroundedRow {
   name: string;
-  cells: Record<StatusKey, number>;
-  total: number;
+  status: CoverStatus;
 }
 
 interface HeatData {
   unit: string;
-  groups: HeatGroup[];
+  rows: GroundedRow[];
 }
 
-function emptyCells(): Record<StatusKey, number> {
-  return { ok: 0, partial: 0, gap: 0, blocked: 0, bug: 0 };
+/** Tally a grounded count vector over exactly the GROUNDED_CUTS keys. */
+function emptyGroundedCounts(): Record<StatusKey, number> {
+  const out = {} as Record<StatusKey, number>;
+  for (const c of GROUNDED_CUTS) out[c.key] = 0;
+  return out;
 }
 
-// ── dimension builders ──────────────────────────────────────────────────────
+// ── grounded dimension builders (per-item status from flowStatus) ────────────
 
-/** Por plano — rows = plans (1 batched plan vs N flows it covers). */
-function buildPlano(inputs: SiteInputs): HeatData {
-  const groups: HeatGroup[] = inputs.plans.map((p) => {
-    const cells = emptyCells();
-    const flowIds = Array.isArray(p["target_test_flow_ids"])
-      ? (p["target_test_flow_ids"] as unknown[]).map(String)
-      : [];
-    const status = planStatusToCut(p["status"]);
-    // Each plan contributes 1 plano + N flows in the row's total. We surface
-    // the per-flow count so the heatmap reflects "1 plano batchando N fluxos".
-    cells[status] = Math.max(1, flowIds.length);
-    return {
-      name: String(p["name"] ?? p["id"] ?? "?"),
-      cells,
-      total: Math.max(1, flowIds.length),
-    };
-  });
-  return { unit: "fluxos cobertos", groups };
+function buildGroundedPlano(
+  inputs: SiteInputs,
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): HeatData {
+  const planStatus = buildGroundedPlanStatusMap(inputs, flowStatus);
+  const rows: GroundedRow[] = inputs.plans.map((p) => ({
+    name: String(p["name"] ?? p["id"] ?? "?"),
+    status: planStatus.get(String(p["id"] ?? "")) ?? "unmapped",
+  }));
+  return { unit: "planos", rows };
 }
 
-/** Por fluxo — rows = scenarios (the real "fluxos"); status derived from
- *  parent plan + bug-finding refs. 1 plan → N rows. */
-function buildFluxo(inputs: SiteInputs): HeatData {
-  const scenStatus = buildScenarioStatusMap(inputs);
-  // Map scenario id → parent plan name for display context.
-  const planNameByScenario = new Map<string, string>();
-  for (const p of inputs.plans) {
-    const planName = String(p["name"] ?? p["id"] ?? "?");
-    const flows = Array.isArray(p["target_test_flow_ids"])
-      ? (p["target_test_flow_ids"] as unknown[]).map(String)
-      : [];
-    for (const f of flows) if (!planNameByScenario.has(f)) planNameByScenario.set(f, planName);
-  }
-  const groups: HeatGroup[] = inputs.scenarios.map((sc) => {
+function buildGroundedFluxo(
+  inputs: SiteInputs,
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): HeatData {
+  const scenStatus = buildGroundedScenarioStatusMap(inputs, flowStatus);
+  const rows: GroundedRow[] = inputs.scenarios.map((sc) => {
     const id = String(sc["id"] ?? "?");
     const name = String(sc["name"] ?? id);
-    const parentPlanName = planNameByScenario.get(id);
-    const cells = emptyCells();
-    cells[scenStatus.get(id) ?? "gap"] = 1;
-    const displayName = parentPlanName ? `${id} · ${parentPlanName}` : id;
-    return { name: name.startsWith(id) ? name : displayName, cells, total: 1 };
+    return { name: name.startsWith(id) ? name : `${id} · ${name}`, status: scenStatus.get(id) ?? "unmapped" };
   });
-  return { unit: "fluxos", groups };
+  return { unit: "fluxos", rows };
 }
 
-// Status precedence, code-cite join, scenario/decision/AC status maps all
-// live in ../coverage.js. Imported above.
-
-/** Por decisão — rows = unitary decisions (1 row per decision). Status is
- *  inherited from linked scenarios (via explicit evidence_scenario_ids OR
- *  code-cite overlap). User pointed out: every decision must appear, and
- *  decisions touched by executed flows must inherit "ok". */
-function buildDecisao(inputs: SiteInputs): HeatData {
-  const decStatus = buildDecisionStatusMap(inputs);
-  const groups: HeatGroup[] = inputs.decisions.map((d) => {
+function buildGroundedDecisao(
+  inputs: SiteInputs,
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): HeatData {
+  const decStatus = buildGroundedDecisionStatusMap(inputs, flowStatus);
+  const rows: GroundedRow[] = inputs.decisions.map((d) => {
     const id = String(d["id"] ?? "?");
     const section = String(d["section"] ?? "");
-    const name = section ? `${id} · ${section}` : id;
-    const cells = emptyCells();
-    cells[decStatus.get(id) ?? "gap"]++;
-    return { name, cells, total: 1 };
+    return { name: section ? `${id} · ${section}` : id, status: decStatus.get(id) ?? "unmapped" };
   });
-  return { unit: "decisões", groups };
+  return { unit: "decisões", rows };
 }
 
-/**
- * Por AC — 1 row per AC spec. Status = derived from `coverage.buildAcStatusMap`
- * (which itself walks decisions→ac_id citations).
- */
-function buildAc(inputs: SiteInputs): HeatData {
+function buildGroundedAc(
+  inputs: SiteInputs,
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): HeatData {
   const acSpecs = inputs.specs.filter((s) => s["kind"] === "ac");
-  if (acSpecs.length === 0) return { unit: "ACs", groups: [] };
-  const acStatusByAcId = buildAcStatusMap(inputs);
-  const groups: HeatGroup[] = acSpecs.map((s) => {
+  if (acSpecs.length === 0) return { unit: "ACs", rows: [] };
+  const acStatus = buildGroundedAcStatusMap(inputs, flowStatus);
+  const rows: GroundedRow[] = acSpecs.map((s) => {
     const cite = (s["cite"] as Record<string, unknown> | undefined) ?? {};
     const acId = String(cite["ac_id"] ?? s["id"] ?? "");
-    const status = acStatusByAcId.get(acId) ?? "gap";
-    const cells = emptyCells();
-    cells[status]++;
     const title = String(s["title"] ?? "");
-    const label = title ? `${acId} · ${title.slice(0, 80)}` : acId;
-    return { name: label, cells, total: 1 };
+    return {
+      name: title ? `${acId} · ${title.slice(0, 80)}` : acId,
+      status: acStatus.get(acId) ?? "unmapped",
+    };
   });
-  return { unit: "ACs", groups };
+  return { unit: "ACs", rows };
 }
 
-/** Por objetivo — rows = specs of kind="objective". */
-function buildObjetivo(inputs: SiteInputs): HeatData {
+/** Por objetivo — rows = specs of kind="objective". Transitive via its cited
+ *  AC(s) when a path exists; otherwise SEM MAPEAMENTO (honest, never silent). */
+function buildGroundedObjetivo(
+  inputs: SiteInputs,
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): HeatData {
   const objectives = inputs.specs.filter((s) => s["kind"] === "objective");
-  if (objectives.length === 0) return { unit: "objetivos", groups: [] };
-  const groups: HeatGroup[] = objectives.map((o) => {
-    const cells = emptyCells();
-    cells.gap = 1; // until objective↔plan linkage lands
-    return { name: String(o["title"] ?? o["id"] ?? "?"), cells, total: 1 };
+  if (objectives.length === 0) return { unit: "objetivos", rows: [] };
+  const acStatus = buildGroundedAcStatusMap(inputs, flowStatus);
+  const rows: GroundedRow[] = objectives.map((o) => {
+    const cite = (o["cite"] as Record<string, unknown> | undefined) ?? {};
+    const acRefs = Array.isArray(o["ac_ids"])
+      ? (o["ac_ids"] as unknown[]).map(String)
+      : cite["ac_id"]
+        ? [String(cite["ac_id"])]
+        : [];
+    const cuts = acRefs.map((a) => acStatus.get(a)).filter((c): c is CoverStatus => !!c && c !== "unmapped");
+    let status: CoverStatus;
+    if (cuts.length === 0) status = "unmapped";
+    else status = new Set(cuts).size === 1 ? cuts[0]! : "misto";
+    return { name: String(o["title"] ?? o["id"] ?? "?"), status };
   });
-  return { unit: "objetivos", groups };
+  return { unit: "objetivos", rows };
 }
 
-function dataForDimension(dim: string, inputs: SiteInputs): HeatData {
-  if (dim === "fluxo") return buildFluxo(inputs);
-  if (dim === "plano") return buildPlano(inputs);
-  if (dim === "decisao") return buildDecisao(inputs);
-  if (dim === "ac") return buildAc(inputs);
-  if (dim === "objetivo") return buildObjetivo(inputs);
-  return { unit: "", groups: [] };
+function dataForDimension(
+  dim: string,
+  inputs: SiteInputs,
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): HeatData {
+  if (dim === "fluxo") return buildGroundedFluxo(inputs, flowStatus);
+  if (dim === "plano") return buildGroundedPlano(inputs, flowStatus);
+  if (dim === "decisao") return buildGroundedDecisao(inputs, flowStatus);
+  if (dim === "ac") return buildGroundedAc(inputs, flowStatus);
+  if (dim === "objetivo") return buildGroundedObjetivo(inputs, flowStatus);
+  return { unit: "", rows: [] };
 }
 
 // ── render ──────────────────────────────────────────────────────────────────
 
-function renderDistributionBar(inputs: SiteInputs, total: number): string {
-  if (total === 0) return '<p class="faint">(sem planos)</p>';
-  const counts: Record<StatusKey, number> = emptyCells();
-  for (const p of inputs.plans) counts[planStatusToCut(p["status"])]++;
-  const segs = STATUS_CUTS.map((c) => {
+/** GROUNDED distribution — tallies the per-goal verdict map DIRECTLY, so the
+ *  bar reconciles to `flowStatus` by construction (the headline's per-item
+ *  grain). When no verdict source exists, render an honest gap. */
+function renderGroundedDistributionBar(
+  flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
+): string {
+  if (!flowStatus || Object.keys(flowStatus).length === 0) {
+    return '<p class="faint">(sem vereditos por meta — Completude/Conformidade não medidas)</p>';
+  }
+  const counts = emptyGroundedCounts();
+  for (const s of Object.values(flowStatus)) counts[flowStatusToCut(s)]++;
+  const segs = GROUNDED_CUTS.map((c) => {
     const n = counts[c.key];
     if (n === 0) return "";
     return `<div class="seg" style="flex:${n};background:var(${c.bgVar})" title="${esc(c.label)} ${n}">${n}</div>`;
   })
     .filter(Boolean)
     .join("");
-  const legend = STATUS_CUTS.map(
+  // Legend carries machine-readable data-v per cut (single-sourced count+label).
+  const legend = GROUNDED_CUTS.map(
+    (c) =>
+      `<span data-v="${c.key}"><i style="background:var(${c.bgVar})"></i><b>${counts[c.key]}</b> ${esc(c.label)}</span>`,
+  ).join("\n");
+  return `
+<div class="dbar">${segs}</div>
+<div class="dlegend">${legend}</div>`;
+}
+
+/** SYNTH (design-intent) distribution — subordinate; reads plan.status. */
+function renderSynthDistributionBar(inputs: SiteInputs, total: number): string {
+  if (total === 0) return '<p class="faint">(sem planos)</p>';
+  const counts = {} as Record<StatusKey, number>;
+  for (const c of SYNTH_CUTS) counts[c.key] = 0;
+  for (const p of inputs.plans) counts[planStatusToCut(p["status"])]++;
+  const segs = SYNTH_CUTS.map((c) => {
+    const n = counts[c.key];
+    if (n === 0) return "";
+    return `<div class="seg" style="flex:${n};background:var(${c.bgVar})" title="${esc(c.label)} ${n}">${n}</div>`;
+  })
+    .filter(Boolean)
+    .join("");
+  const legend = SYNTH_CUTS.map(
     (c) =>
       `<span><i style="background:var(${c.bgVar})"></i><b>${counts[c.key]}</b> ${esc(c.label)}</span>`,
   ).join("\n");
@@ -186,55 +230,40 @@ function renderDistributionBar(inputs: SiteInputs, total: number): string {
 <div class="dlegend">${legend}</div>`;
 }
 
+/** Grounded heat table — rows = items, columns = GROUNDED_CUTS, ONE hot cell
+ *  per row. The row's `data-v="<status>"` is the SINGLE SOURCE for the machine
+ *  gate AND the hot cell (they cannot diverge). */
 function renderHeatTable(data: HeatData, colhLabel: string): string {
-  if (data.groups.length === 0) {
-    return `<p class="faint">(sem dados nesta dimensão; o cruzamento ${esc(colhLabel.toLowerCase())} × cenários precisa de mais dados persistidos)</p>`;
+  if (data.rows.length === 0) {
+    return `<p class="faint">(sem itens nesta dimensão)</p>`;
   }
-  const colMax: Record<StatusKey, number> = emptyCells();
-  for (const r of data.groups)
-    for (const c of STATUS_CUTS) colMax[c.key] = Math.max(colMax[c.key], r.cells[c.key]);
-  function cell(value: number, col: StatusCut): string {
-    if (value === 0) return `<td class="cell" style="background:#fbfcfe;color:var(--faint)">—</td>`;
-    const max = colMax[col.key] || 1;
-    const pct = Math.round(16 + 84 * (value / max));
-    const bg = `color-mix(in srgb, var(${col.bgVar}) ${pct}%, #fff)`;
-    const fg = pct >= 58 ? "#fff" : "var(--ink)";
-    return `<td class="cell" style="background:${bg};color:${fg}">${value}</td>`;
+  const totals = emptyGroundedCounts();
+  for (const r of data.rows) totals[r.status] = (totals[r.status] ?? 0) + 1;
+  function cell(rowStatus: CoverStatus, col: StatusCut): string {
+    if (rowStatus !== col.key)
+      return `<td class="cell" style="background:#fbfcfe;color:var(--faint)">—</td>`;
+    const bg = `color-mix(in srgb, var(${col.bgVar}) 84%, #fff)`;
+    return `<td class="cell" style="background:${bg};color:#fff">1</td>`;
   }
-  const totals: Record<StatusKey, number> = emptyCells();
-  for (const r of data.groups) for (const c of STATUS_CUTS) totals[c.key] += r.cells[c.key];
-  const grand = data.groups.reduce((s, r) => s + r.total, 0);
-  const compP =
-    grand === 0
-      ? 0
-      : Math.round(((totals.ok + 0.5 * totals.partial) / grand) * 100);
-  const confP = grand === 0 ? 0 : Math.round(((grand - totals.bug) / grand) * 100);
   const head =
     `<thead><tr><th class="ah">${esc(colhLabel)}</th>` +
-    STATUS_CUTS.map((c) => `<th><span class="hsym">${c.sym}</span><span>${esc(c.label)}</span></th>`).join("") +
-    `<th>Σ</th><th>Compl.</th><th>Conf.</th></tr></thead>`;
-  const rows = data.groups
-    .map((g) => {
-      const cP =
-        g.total === 0 ? 0 : Math.round(((g.cells.ok + 0.5 * g.cells.partial) / g.total) * 100);
-      const cF = g.total === 0 ? 0 : Math.round(((g.total - g.cells.bug) / g.total) * 100);
-      return (
-        `<tr><td class="rowh">${esc(g.name)}</td>` +
-        STATUS_CUTS.map((c) => cell(g.cells[c.key], c)).join("") +
-        `<td class="sum">${g.total}</td>` +
-        `<td class="comp" style="color:${cP >= 70 ? "var(--ok)" : cP >= 30 ? "var(--partial)" : "var(--bug)"}">${cP}%</td>` +
-        `<td class="comp" style="color:${cF >= 70 ? "var(--ok)" : cF >= 30 ? "var(--partial)" : "var(--bug)"}">${cF}%</td>` +
-        `</tr>`
-      );
-    })
+    GROUNDED_CUTS.map(
+      (c) => `<th><span class="hsym">${c.sym}</span><span>${esc(c.label)}</span></th>`,
+    ).join("") +
+    `<th>Σ</th></tr></thead>`;
+  const rows = data.rows
+    .map(
+      (r) =>
+        `<tr data-v="${r.status}"><td class="rowh">${esc(r.name)}</td>` +
+        GROUNDED_CUTS.map((c) => cell(r.status, c)).join("") +
+        `<td class="sum">1</td></tr>`,
+    )
     .join("");
+  const grand = data.rows.length;
   const total =
     `<tr class="totrow"><td class="rowh">Total</td>` +
-    STATUS_CUTS.map((c) => `<td class="cell"><b>${totals[c.key]}</b></td>`).join("") +
-    `<td class="sum">${grand}</td>` +
-    `<td class="comp" style="color:${compP >= 70 ? "var(--ok)" : compP >= 30 ? "var(--partial)" : "var(--bug)"}">${compP}%</td>` +
-    `<td class="comp" style="color:${confP >= 70 ? "var(--ok)" : confP >= 30 ? "var(--partial)" : "var(--bug)"}">${confP}%</td>` +
-    `</tr>`;
+    GROUNDED_CUTS.map((c) => `<td class="cell" data-v="${c.key}"><b>${totals[c.key] ?? 0}</b></td>`).join("") +
+    `<td class="sum">${grand}</td></tr>`;
   return `<table class="heat">${head}<tbody>${rows}${total}</tbody></table>`;
 }
 
@@ -325,6 +354,7 @@ function renderGroundedResult(adj: SiteAdjudicatedKpis | undefined): string {
 export function renderCompletude(inputs: SiteInputs): string {
   const total = inputs.plans.length;
   const adj = readAdjudicated(inputs);
+  const flowStatus = readFlowStatus(inputs);
   const { compl, conf } = computeGaugePcts(inputs);
   const DIM_LABELS: Record<string, string> = {
     decisao: "Decisão",
@@ -333,32 +363,31 @@ export function renderCompletude(inputs: SiteInputs): string {
     fluxo: "Cenário",
     ac: "AC",
   };
-  // Pre-serialize every dimension as a JSON island so the inline JS can swap
-  // them without a round-trip — same determinism contract as the rest.
+  // Pre-serialize every GROUNDED dimension as a JSON island so the inline JS can
+  // swap them without a round-trip — same determinism contract as the rest.
+  // Each cell/row status is derived from the per-goal verdict map (flowStatus).
   const datas: Record<string, { colh: string; html: string }> = {};
   for (const dim of Object.keys(DIM_LABELS)) {
-    const data = dataForDimension(dim, inputs);
+    const data = dataForDimension(dim, inputs, flowStatus);
     datas[dim] = { colh: DIM_LABELS[dim] ?? "", html: renderHeatTable(data, DIM_LABELS[dim] ?? "") };
   }
+  const groundedAvailable = !!flowStatus && Object.keys(flowStatus).length > 0;
   return `
 <section id="painel" data-tab="visao">
   <h2>Completude e Cobertura</h2>
   ${renderGroundedResult(adj)}
-  <div class="card synth-subordinate" style="margin-top:14px">
-    <h3 style="margin-top:0">Síntese (intenção de design) — não é o resultado medido</h3>
-    <p class="faint" style="margin-top:0">Derivado dos artefatos de síntese (decisões/planos),
-    <b>não</b> de vereditos. Mapa de intenção de design — subordinado ao resultado medido acima.</p>
+  <div class="card" data-grounded-body="${groundedAvailable ? "1" : "0"}" style="margin-top:14px">
+    <h3 style="margin-top:0">Cobertura de execução <span class="faint">· por veredito adjudicado (por meta)</span></h3>
+    <p class="faint" style="margin-top:0">Status por item derivado do <b>mapa de vereditos por meta</b>
+    (a mesma fonte do resultado medido acima, na granularidade de item) — <b>não</b> da síntese.
+    Itens sem fluxo/veredito associável aparecem como <b>Sem mapeamento</b> (lacuna explícita, nunca silenciada como “Não executado”).</p>
     <div class="dashhead">
       <div class="barwrap">
-        <p style="margin:0 0 10px">Completude (síntese) <b>${compl}%</b> · Conformidade (síntese) <b>${conf}%</b></p>
-        <h4 style="margin:0 0 10px">Distribuição por status <span class="faint">· ${total} plano(s)</span></h4>
-        ${renderDistributionBar(inputs, total)}
+        <h4 style="margin:0 0 10px">Distribuição por status <span class="faint">· vereditos por meta</span></h4>
+        ${renderGroundedDistributionBar(flowStatus)}
       </div>
     </div>
-  </div>
-  <div class="card synth-subordinate" style="margin-top:14px">
-    <h3 style="margin-top:0">Mapa de calor <span class="faint">(síntese · intenção de design)</span></h3>
-    <div class="fbar" id="dimtoggle">
+    <div class="fbar" id="dimtoggle" style="margin-top:14px">
       <button class="fbtn active" data-d="decisao">Por decisão</button>
       <button class="fbtn" data-d="objetivo">Por objetivo</button>
       <button class="fbtn" data-d="plano">Por plano</button>
@@ -370,6 +399,18 @@ export function renderCompletude(inputs: SiteInputs): string {
   <script type="application/json" id="dash-heat-data">${JSON.stringify(
     Object.fromEntries(Object.entries(datas).map(([k, v]) => [k, v.html])),
   ).replace(/</g, "\\u003c")}</script>
+  <div class="card synth-subordinate" style="margin-top:14px">
+    <h3 style="margin-top:0">Síntese (intenção de design) — não é o resultado medido</h3>
+    <p class="faint" style="margin-top:0">Derivado dos artefatos de síntese (decisões/planos),
+    <b>não</b> de vereditos. Mapa de intenção de design — subordinado ao resultado medido acima.</p>
+    <div class="dashhead">
+      <div class="barwrap">
+        <p style="margin:0 0 10px">Completude (síntese) <b>${compl}%</b> · Conformidade (síntese) <b>${conf}%</b></p>
+        <h4 style="margin:0 0 10px">Distribuição por status <span class="faint">· ${total} plano(s)</span></h4>
+        ${renderSynthDistributionBar(inputs, total)}
+      </div>
+    </div>
+  </div>
 </section>`;
 }
 

@@ -11,27 +11,22 @@
  *   pending → gap      (⬜ Não exec.)
  *   bug-found (finding referencing scenario) → bug
  */
-import { buildScenarioStatusMap, type CoverStatus } from "../coverage.js";
+import {
+  buildGroundedScenarioStatusMap,
+  COVER_CLASS,
+  COVER_LABEL,
+  type CoverStatus,
+  readFlowStatus,
+} from "../coverage.js";
 import { esc } from "../escape.js";
 import type { SiteInputs } from "../types.js";
 
 type CaseStatus = CoverStatus;
 
-const VLABEL: Record<CaseStatus, string> = {
-  ok: "Conforme",
-  partial: "Parcial",
-  blocked: "Bloqueado",
-  gap: "Não exec.",
-  bug: "Bug",
-};
-
-const VCLASS: Record<CaseStatus, string> = {
-  ok: "pill-ok",
-  partial: "pill-partial",
-  blocked: "pill-blocked",
-  gap: "pill-gap",
-  bug: "pill-bug",
-};
+// Visible label + pill class are single-sourced from the coverage module, so
+// the human text and the machine `data-v` can never diverge.
+const VLABEL = COVER_LABEL;
+const VCLASS = COVER_CLASS;
 
 /** Find the parent plan for a scenario id and derive its case status via
  *  the shared scenario-status map (consistent with §Painel + §Cobertura). */
@@ -215,16 +210,19 @@ function groupScenariosByPlan(
 }
 
 export function renderCases(inputs: SiteInputs): string {
-  const scenStatus = buildScenarioStatusMap(inputs);
+  // GROUNDED: per-scenario status comes from the per-goal verdict map joined via
+  // scenario.flow_id — NOT the synth plan.status. A scenario with no flow_id (or
+  // a flow_id absent from the map) renders SEM MAPEAMENTO, never "Não executado".
+  const scenStatus = buildGroundedScenarioStatusMap(inputs, readFlowStatus(inputs));
   const groups = groupScenariosByPlan(inputs, scenStatus);
   const filterBar = `
 <div class="fbar" id="casefilters">
   <button class="fbtn active" data-f="all">Todos</button>
-  <button class="fbtn" data-f="ok">✓ Conforme</button>
-  <button class="fbtn" data-f="bug">🐞 Bugs</button>
-  <button class="fbtn" data-f="partial">◑ Parcial</button>
+  <button class="fbtn" data-f="ok">✓ Coberto</button>
+  <button class="fbtn" data-f="failed">✗ Falhou</button>
+  <button class="fbtn" data-f="gap">⬜ Não executado</button>
   <button class="fbtn" data-f="blocked">🔒 Bloqueado</button>
-  <button class="fbtn" data-f="gap">⬜ Não exec.</button>
+  <button class="fbtn" data-f="unmapped">❔ Sem mapeamento</button>
 </div>`;
   const body =
     groups.length === 0

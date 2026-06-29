@@ -30,6 +30,25 @@ export type CheckpointInputs = SiteInputs["checkpoints"];
  * through `AdjudicatedSiteInputs`. The runtime object DOES carry it (the host
  * always emits it).
  */
+/**
+ * Per-goal adjudicated status (the per-ITEM grain of the headline rollup).
+ * flowId == Flow.id == goalId. Emitted by the host on `adjudicated.flowStatus`
+ * from the SAME deriveFeatureRollups join the headline aggregates use, so the
+ * per-flow map reconciles to the per-feature numbers by construction.
+ *   - satisfied        → a satisfied verdict          (Coberto)
+ *   - violated         → a violated verdict           (Falhou)
+ *   - blocked          → proven_blocked               (Bloqueado)
+ *   - contradictory    → contradictory/flip goal      (integrity note, NOT bug)
+ *   - not_adjudicated  → discovered flow, rows-but-inconclusive OR no rows
+ *                        (the MAPPABLE Não executado — legit, not a gap)
+ */
+export type AdjudicatedFlowStatus =
+  | "satisfied"
+  | "violated"
+  | "contradictory"
+  | "blocked"
+  | "not_adjudicated";
+
 export interface SiteAdjudicatedKpis {
   /** true => no verdict source: render an honest gap, NEVER 0/100. */
   noAdjudicatedData: boolean;
@@ -41,6 +60,13 @@ export interface SiteAdjudicatedKpis {
   bugsApp: { count: number; flows: string[] };
   /** Contradictory/flip goals — integrity note, NOT a bug. */
   verdictIntegrity: { count: number; flows: string[] };
+  /**
+   * Per-goal adjudicated status map (`flowId → status`). The SINGLE SOURCE for
+   * the report BODY (heatmap / cases / decisions / plans), consistent with the
+   * headline by construction. Optional: an older host may omit it — read
+   * defensively. NOT the pass/incomplete/fail FlowVerdict (a different vocab).
+   */
+  flowStatus?: Record<string, AdjudicatedFlowStatus>;
 }
 
 /** SiteInputs widened with the (host-emitted) optional grounded KPIs. */

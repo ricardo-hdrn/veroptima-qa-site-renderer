@@ -6,12 +6,20 @@
  * we surface the dir link. The renderer does NOT inspect file contents;
  * the caller is responsible for copying the evidence into ./evidence/.
  */
+import {
+  buildGroundedPlanStatusMap,
+  COVER_CLASS,
+  COVER_LABEL,
+  type CoverStatus,
+  readFlowStatus,
+} from "../coverage.js";
 import { esc } from "../escape.js";
 import type { SiteInputs } from "../types.js";
 
 function renderPlan(
   plan: Record<string, unknown>,
   inputs: SiteInputs,
+  groundedStatus: CoverStatus,
 ): string {
   const id = String(plan["id"] ?? "?");
   const name = String(plan["name"] ?? "");
@@ -33,9 +41,10 @@ function renderPlan(
   const blockedReason = status === "blocked" ? String(plan["blocked_reason"] ?? plan["reason"] ?? "") : "";
 
   return `
-<article class="plan-card status-${esc(status)}">
+<article class="plan-card status-${esc(status)}" data-v="${groundedStatus}">
   <header>
-    <span class="status-badge status-${esc(status)}">${esc(status)}</span>
+    <span class="pill ${COVER_CLASS[groundedStatus]}">${esc(COVER_LABEL[groundedStatus])}</span>
+    <span class="status-badge status-${esc(status)}" title="status de síntese (intenção de design)">${esc(status)}</span>
     <b>${esc(id)}</b>
   </header>
   <div class="plan-name">${esc(name)}</div>
@@ -53,13 +62,17 @@ function renderPlan(
 }
 
 export function renderPlans(inputs: SiteInputs): string {
+  // GROUNDED: per-plan status from plan.flow_ids → per-goal verdict map.
+  const planStatus = buildGroundedPlanStatusMap(inputs, readFlowStatus(inputs));
   return `
 <section id="plans" data-tab="casos">
   <h2><span class="num">04</span>Casos de teste, planos &amp; evidências</h2>
   ${
     inputs.plans.length === 0
       ? '<p class="faint">(sem planos)</p>'
-      : inputs.plans.map((p) => renderPlan(p, inputs)).join("\n")
+      : inputs.plans
+          .map((p) => renderPlan(p, inputs, planStatus.get(String(p["id"] ?? "")) ?? "unmapped"))
+          .join("\n")
   }
 </section>`;
 }
