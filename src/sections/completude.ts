@@ -53,7 +53,18 @@ const GROUNDED_CUTS: ReadonlyArray<StatusCut> = [
   { key: "misto", label: COVER_LABEL.misto, sym: "◑", bgVar: "--partial" },
   { key: "contradictory", label: COVER_LABEL.contradictory, sym: "⚠", bgVar: "--po" },
   { key: "unmapped", label: COVER_LABEL.unmapped, sym: "❔", bgVar: "--unmapped" },
+  // EXCLUÍDO — out-of-scope by policy (addressable exclusion). A DISTINCT column
+  // in the heat table; partitioned OUT of the addressable buckets in the
+  // distribution bar (see renderGroundedDistributionBar).
+  { key: "excluded", label: COVER_LABEL.excluded, sym: "∅", bgVar: "--excluded" },
 ];
+
+/** The ADDRESSABLE cuts — every grounded cut EXCEPT excluded. The distribution
+ *  bar's buckets sum over exactly this set (discovered − excluded), so the body
+ *  denominator reconciles to the SAME addressable set the headline uses. */
+const ADDRESSABLE_CUTS: ReadonlyArray<StatusCut> = GROUNDED_CUTS.filter(
+  (c) => c.key !== "excluded",
+);
 
 /** SYNTH (design-intent) cuts — used ONLY by the subordinate distribution. */
 const SYNTH_CUTS: ReadonlyArray<StatusCut> = [
@@ -182,7 +193,14 @@ function dataForDimension(
 
 /** GROUNDED distribution — tallies the per-goal verdict map DIRECTLY, so the
  *  bar reconciles to `flowStatus` by construction (the headline's per-item
- *  grain). When no verdict source exists, render an honest gap. */
+ *  grain). When no verdict source exists, render an honest gap.
+ *
+ *  RECONCILIATION: the bar's buckets sum over the ADDRESSABLE set only
+ *  (discovered − excluded) — exactly the denominator the headline
+ *  Completude/Conformidade use. EXCLUÍDO (out-of-scope by policy) is partitioned
+ *  OUT and shown SEPARATELY with its own `data-v="excluded"`; it is NEVER folded
+ *  into an addressable bucket (gap/unmapped/…). The discovered-vs-addressable
+ *  framing is surfaced explicitly ("endereçáveis N (excluídos M)"). */
 function renderGroundedDistributionBar(
   flowStatus: Record<string, AdjudicatedFlowStatus> | undefined,
 ): string {
@@ -191,7 +209,13 @@ function renderGroundedDistributionBar(
   }
   const counts = emptyGroundedCounts();
   for (const s of Object.values(flowStatus)) counts[flowStatusToCut(s)]++;
-  const segs = GROUNDED_CUTS.map((c) => {
+
+  const discovered = Object.keys(flowStatus).length;
+  const excludedN = counts.excluded;
+  const addressable = discovered - excludedN;
+
+  // The bar/legend span the ADDRESSABLE buckets only (excluded partitioned out).
+  const segs = ADDRESSABLE_CUTS.map((c) => {
     const n = counts[c.key];
     if (n === 0) return "";
     return `<div class="seg" style="flex:${n};background:var(${c.bgVar})" title="${esc(c.label)} ${n}">${n}</div>`;
@@ -199,13 +223,31 @@ function renderGroundedDistributionBar(
     .filter(Boolean)
     .join("");
   // Legend carries machine-readable data-v per cut (single-sourced count+label).
-  const legend = GROUNDED_CUTS.map(
+  const legend = ADDRESSABLE_CUTS.map(
     (c) =>
       `<span data-v="${c.key}"><i style="background:var(${c.bgVar})"></i><b>${counts[c.key]}</b> ${esc(c.label)}</span>`,
   ).join("\n");
+
+  // EXCLUÍDO — shown DISTINCTLY, NEVER inside the addressable buckets. Single
+  // source: data-v="excluded" + the COVER_LABEL.excluded label cannot diverge.
+  const excludedBlock =
+    excludedN > 0
+      ? `
+<div class="dexcluded"><span data-v="excluded"><i style="background:var(--excluded)"></i><b>${excludedN}</b> ${esc(
+          COVER_LABEL.excluded,
+        )} <span class="faint">· fora de escopo / não-endereçável (mock sem backend)</span></span></div>`
+      : "";
+
+  // Discovered-vs-addressable, no conflation: the addressable denominator the
+  // body completude reconciles to (matching the headline), with excluded apart.
+  const reconcile = `
+<p class="faint dreconcile">endereçáveis <b>${addressable}</b>${
+    excludedN > 0 ? ` (excluídos ${excludedN})` : ""
+  } · descobertos ${discovered}</p>`;
+
   return `
 <div class="dbar">${segs}</div>
-<div class="dlegend">${legend}</div>`;
+<div class="dlegend">${legend}</div>${excludedBlock}${reconcile}`;
 }
 
 /** SYNTH (design-intent) distribution — subordinate; reads plan.status. */

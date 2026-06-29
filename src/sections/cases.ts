@@ -223,6 +223,7 @@ export function renderCases(inputs: SiteInputs): string {
   <button class="fbtn" data-f="gap">⬜ Não executado</button>
   <button class="fbtn" data-f="blocked">🔒 Bloqueado</button>
   <button class="fbtn" data-f="unmapped">❔ Sem mapeamento</button>
+  <button class="fbtn" data-f="excluded">∅ Excluído</button>
 </div>`;
   const body =
     groups.length === 0

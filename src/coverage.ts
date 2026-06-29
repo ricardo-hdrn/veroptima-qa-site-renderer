@@ -32,6 +32,11 @@ import { readAdjudicated, type AdjudicatedFlowStatus, type SiteInputs } from "./
  *                      verdict map → SEM MAPEAMENTO (the loud honesty gap;
  *                      NEVER silently bucketed as "Não executado")
  *   - misto          — item joins MULTIPLE flows with CONFLICTING statuses
+ *   - excluded       — the flow is an addressable EXCLUSION (out-of-scope by
+ *                      policy: mock / no-backend) → EXCLUÍDO. It is NOT in the
+ *                      addressable set, so it is shown SEPARATELY and is NEVER
+ *                      conflated with `gap` (mappable-no-verdict) or `unmapped`
+ *                      (no flow ref) — three distinct kinds of "untested".
  */
 export type CoverStatus =
   | "ok"
@@ -42,7 +47,8 @@ export type CoverStatus =
   | "failed"
   | "contradictory"
   | "unmapped"
-  | "misto";
+  | "misto"
+  | "excluded";
 
 const STATUS_RANK: Record<CoverStatus, number> = {
   ok: 4,
@@ -56,6 +62,7 @@ const STATUS_RANK: Record<CoverStatus, number> = {
   contradictory: 1,
   misto: 1,
   unmapped: 0,
+  excluded: 0,
 };
 
 /** Visible label + pill class for every status — SINGLE SOURCE so the human
@@ -70,6 +77,7 @@ export const COVER_LABEL: Record<CoverStatus, string> = {
   contradictory: "Integridade",
   unmapped: "Sem mapeamento",
   misto: "Misto",
+  excluded: "Excluído",
 };
 
 export const COVER_CLASS: Record<CoverStatus, string> = {
@@ -82,6 +90,7 @@ export const COVER_CLASS: Record<CoverStatus, string> = {
   contradictory: "pill-contradictory",
   unmapped: "pill-unmapped",
   misto: "pill-misto",
+  excluded: "pill-excluded",
 };
 
 export function mergeStatus(
@@ -236,6 +245,8 @@ export function flowStatusToCut(s: AdjudicatedFlowStatus): CoverStatus {
       return "contradictory"; // integrity note (não-é-bug)
     case "not_adjudicated":
       return "gap"; // Não executado (mappable, no adjudicating verdict)
+    case "excluded":
+      return "excluded"; // Excluído (out-of-scope by policy; NOT addressable)
     default:
       return "unmapped";
   }

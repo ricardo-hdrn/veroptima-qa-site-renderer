@@ -41,13 +41,21 @@ export type CheckpointInputs = SiteInputs["checkpoints"];
  *   - contradictory    → contradictory/flip goal      (integrity note, NOT bug)
  *   - not_adjudicated  → discovered flow, rows-but-inconclusive OR no rows
  *                        (the MAPPABLE Não executado — legit, not a gap)
+ *   - excluded         → a discovered flow in the feature's addressable
+ *                        exclusions (manifest addressable_exclusions, e.g. a
+ *                        GEO mock/no-backend flow) — OUT OF SCOPE by policy.
+ *                        Takes precedence over not_adjudicated. It is NOT
+ *                        addressable: it sits OUTSIDE the addressable
+ *                        completude/conformidade denominators, and must NEVER
+ *                        be rendered as the mappable "Não executado" gap.
  */
 export type AdjudicatedFlowStatus =
   | "satisfied"
   | "violated"
   | "contradictory"
   | "blocked"
-  | "not_adjudicated";
+  | "not_adjudicated"
+  | "excluded";
 
 export interface SiteAdjudicatedKpis {
   /** true => no verdict source: render an honest gap, NEVER 0/100. */

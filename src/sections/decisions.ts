@@ -66,6 +66,7 @@ export function renderDecisions(inputs: SiteInputs): string {
     <button class="fbtn" data-f="gap">⬜ Não executado</button>
     <button class="fbtn" data-f="blocked">🔒 Bloqueado</button>
     <button class="fbtn" data-f="unmapped">❔ Sem mapeamento</button>
+    <button class="fbtn" data-f="excluded">∅ Excluído</button>
   </div>
   <table class="data-table">
     <thead><tr><th>ID</th><th>Seção</th><th>IF ⇒ THEN</th><th>Status</th><th>Persistência</th><th>Cenários</th></tr></thead>

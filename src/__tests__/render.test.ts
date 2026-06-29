@@ -462,6 +462,142 @@ describe("renderSite — grounded BODY (per-item status from flowStatus)", () =>
   });
 });
 
+// ── GEO-EXCLUSION (the `excluded` per-goal state) ────────────────────────────
+//
+// analise-geo-shaped: 1 satisfied + 1 not_adjudicated (addressable 2) + 3
+// excluded mock/no-backend flows (discovered 5). The body completude must read
+// 1/2 = 50% (matching the headline addressable denominator), NOT 1/5. EXCLUÍDO
+// is a DISTINCT body state — never folded into Não executado (gap) or Sem
+// mapeamento (unmapped).
+
+const GEO_FLOW_STATUS: Record<string, AdjudicatedFlowStatus> = {
+  "FLOW-COV": "satisfied",
+  "FLOW-NEX": "not_adjudicated",
+  "FLOW-MOCK-1": "excluded",
+  "FLOW-MOCK-2": "excluded",
+  "FLOW-MOCK-3": "excluded",
+};
+
+const GEO_ADJ: SiteAdjudicatedKpis = {
+  noAdjudicatedData: false,
+  // headline denominator = ADDRESSABLE (discovered 5 − excluded 3 = 2).
+  completude: { verified: 1, addressable: 2, pct: 50 },
+  conformidade: { approved: 1, addressable: 2, pct: 50 },
+  bugsApp: { count: 0, flows: [] },
+  verdictIntegrity: { count: 0, flows: [] },
+  flowStatus: GEO_FLOW_STATUS,
+};
+
+function makeGeoInputs(): AdjudicatedSiteInputs {
+  return {
+    source: {
+      sessionDir: "/tmp/geo-session",
+      capabilityId: "analise-geo",
+      featureDir: "/tmp/geo-session/features/analise-geo",
+    },
+    feature: {
+      id: "analise-geo",
+      name: "Análise geo",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-02T00:00:00Z",
+    },
+    specs: [],
+    storiesAcs: [],
+    synths: { endpoints: [], entities: [], tables: [], form_components: [], form_conditionals: [] },
+    decisions: [],
+    scenarios: [
+      { id: "SC-COV", name: "Geo coberta", flow_id: "FLOW-COV", cites: [] },
+      { id: "SC-NEX", name: "Geo não executada", flow_id: "FLOW-NEX", cites: [] },
+      // EXCLUDED mock/no-backend flows — must render Excluído, NOT gap/unmapped.
+      { id: "SC-MOCK-1", name: "Geo mock 1", flow_id: "FLOW-MOCK-1", cites: [] },
+      { id: "SC-MOCK-2", name: "Geo mock 2", flow_id: "FLOW-MOCK-2", cites: [] },
+      { id: "SC-MOCK-3", name: "Geo mock 3", flow_id: "FLOW-MOCK-3", cites: [] },
+      // UNMAPPABLE control: no flow_id → unmapped (distinct from excluded).
+      { id: "SC-ORPHAN", name: "Geo sem fluxo", cites: [] },
+    ],
+    plans: [
+      {
+        id: "PLAN-GEO",
+        name: "Plano geo",
+        status: "ticked",
+        target_test_flow_ids: ["SC-COV", "SC-NEX", "SC-MOCK-1", "SC-MOCK-2", "SC-MOCK-3", "SC-ORPHAN"],
+        flow_ids: ["FLOW-COV"],
+      },
+    ],
+    findings: [],
+    checkpoints: { A: null, B: null, C: null },
+    evidenceDirs: [],
+    runflowDir: null,
+    flowsWithVerdicts: [],
+    unattachedVerdicts: [],
+    builtAtIso: FIXED_TIME,
+    locale: "pt-BR",
+    adjudicated: GEO_ADJ,
+  };
+}
+
+/** Read a single grounded-legend / excluded-block count by its data-v cut. */
+function legendCount(html: string, cut: string): number | null {
+  const m = html.match(new RegExp(`<span data-v="${cut}"><i[^>]*></i><b>(\\d+)</b>`));
+  return m ? parseInt(m[1]!, 10) : null;
+}
+
+describe("renderSite — geo-exclusion: the `excluded` per-goal state renders distinctly", () => {
+  test("an excluded flow renders Excluído (data-v=excluded), distinct from gap and unmapped", async () => {
+    const out = await renderSite(makeGeoInputs());
+
+    // The case pill is single-sourced: data-v == the CoverStatus.
+    expect(casePillStatus(out.html, "SC-MOCK-1")).toBe("excluded");
+    expect(casePillStatus(out.html, "SC-MOCK-2")).toBe("excluded");
+    // Distinct from the mappable gap (Não executado) and the no-ref unmapped.
+    expect(casePillStatus(out.html, "SC-NEX")).toBe("gap");
+    expect(casePillStatus(out.html, "SC-ORPHAN")).toBe("unmapped");
+    expect(casePillStatus(out.html, "SC-MOCK-1")).not.toBe("gap");
+    expect(casePillStatus(out.html, "SC-MOCK-1")).not.toBe("unmapped");
+
+    // The visible Excluído label is present and distinct from the other two.
+    expect(out.html).toContain("Excluído");
+    expect(out.html).toContain("Não executado");
+    expect(out.html).toContain("Sem mapeamento");
+  });
+
+  test("distribution reconciles to the ADDRESSABLE set; Excluído shown separately; reads 1/2 not 1/5", async () => {
+    const out = await renderSite(makeGeoInputs());
+
+    // Addressable buckets: ok=1, gap=1 → sum 2 (= addressable). Excluded is OUT.
+    expect(legendCount(out.html, "ok")).toBe(1);
+    expect(legendCount(out.html, "gap")).toBe(1);
+
+    // EXCLUÍDO is shown DISTINCTLY with its own data-v="excluded" count = 3.
+    expect(legendCount(out.html, "excluded")).toBe(3);
+
+    // Discovered-vs-addressable, no conflation: addressable denominator = 2.
+    expect(out.html).toContain("endereçáveis <b>2</b>");
+    expect(out.html).toContain("(excluídos 3)");
+    // The body denominator must NOT inflate to the discovered count.
+    expect(out.html).not.toContain("endereçáveis <b>5</b>");
+
+    // The headline completude reads 1/2 (addressable), NEVER 1/5 (discovered).
+    expect(out.html).toContain("1/2");
+    expect(out.html).not.toContain("1/5");
+  });
+
+  test("the heat map carries a distinct Excluído column single-sourced from data-v", async () => {
+    const out = await renderSite(makeGeoInputs());
+    const island = out.html.match(
+      /<script type="application\/json" id="dash-heat-data">([\s\S]*?)<\/script>/,
+    );
+    expect(island).not.toBeNull();
+    const data = JSON.parse(island![1]!.replace(/\\u003c/g, "<")) as Record<string, string>;
+    const fluxoHtml = data["fluxo"]!;
+    // The three excluded scenarios carry data-v="excluded" rows in the heatmap.
+    const excludedRows = [...fluxoHtml.matchAll(/<tr data-v="excluded">/g)].length;
+    expect(excludedRows).toBe(3);
+    // And the Excluído column header is present (distinct column, not folded).
+    expect(fluxoHtml).toContain("Excluído");
+  });
+});
+
 describe("renderSite — grounded pcts are rounded ONCE (Math.round) for display", () => {
   // A fractional ratio that exposes the floor-vs-round bug: completude 3/8 = 37.5
   // (floor 37, round 38 — the monitor shows 38) and conformidade 2/3 = 66.666…

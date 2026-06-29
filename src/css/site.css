@@ -20,6 +20,9 @@
     --bug:#e11d48; --bugbg:#fdeaef; --po:#0891b2; --pobg:#e6f6fb;
     /* loud honesty gap — visibly distinct from the slate --gap (Não executado) */
     --unmapped:#9333ea; --unmappedbg:#f3e8ff;
+    /* out-of-scope by policy (addressable exclusion / mock sem backend) —
+       a graphite distinct from both --gap (slate) and --unmapped (purple) */
+    --excluded:#334155; --excludedbg:#eef2f7;
     --shadow:0 1px 2px rgba(15,23,42,.05),0 8px 22px rgba(2,140,160,.10);
     --radius:14px;
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
@@ -128,6 +131,8 @@
   .pill.bug{background:var(--bugbg);color:var(--bug)}
   .pill.failed{background:var(--bugbg);color:var(--bug)} .pill.unmapped{background:var(--unmappedbg);color:var(--unmapped)}
   .pill.misto{background:var(--partialbg);color:var(--partial)} .pill.contradictory{background:var(--pobg);color:var(--po)}
+  /* out-of-scope by policy — hatched + struck so it never reads as a plain gap */
+  .pill.excluded{background:var(--excludedbg);color:var(--excluded);text-decoration:line-through;text-decoration-thickness:1px}
   .legend{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 18px}
   .lg{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);font-weight:600}
   .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
@@ -238,6 +243,12 @@
   .dlegend span{display:inline-flex;align-items:center;gap:7px}
   .dlegend i{width:12px;height:12px;border-radius:4px;display:inline-block}
   .dlegend b{color:var(--ink)}
+  /* EXCLUÍDO — partitioned OUT of the addressable bar, shown distinctly below it */
+  .dexcluded{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);font-size:13px;color:var(--muted)}
+  .dexcluded span{display:inline-flex;align-items:center;gap:7px}
+  .dexcluded i{width:12px;height:12px;border-radius:4px;display:inline-block}
+  .dexcluded b{color:var(--excluded)}
+  .dreconcile{margin:8px 0 0;font-size:12.5px}
   .dashhead{display:flex;gap:24px;align-items:center;flex-wrap:wrap}
   .dashhead .barwrap{flex:1;min-width:260px}
   .gaugewrap{display:flex;gap:16px;flex-wrap:wrap;flex:none}
@@ -435,6 +446,8 @@
   .pill.pill-unmapped{background:var(--unmapped)}
   .pill.pill-misto{background:var(--partial)}
   .pill.pill-contradictory{background:var(--po)}
+  /* out-of-scope by policy — hatched graphite, unmistakably not a plain gap */
+  .pill.pill-excluded{background:repeating-linear-gradient(45deg,var(--excluded),var(--excluded) 5px,#475569 5px,#475569 10px)}
 
   /* scenario body — dl with side labels */
   .scbody{padding:0 16px 16px;border-top:1px solid var(--line2)}
