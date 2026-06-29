@@ -2,7 +2,10 @@
  * §04 Casos de teste, planos & evidências — renders scenarios grouped by
  * parent plan as `<details class="sc">` collapsibles, with filter buttons,
  * scenario detail dl (Intenção / AC-regra / Passos / Previsto / Resultado /
- * Citação), evidence carousel + video.
+ * Citação), and the VERDICT-ANCHORED evidence DRILL: the scenario's flow →
+ * its proving run → ordered steps → step-anchored screenshots (see drill.ts).
+ * This replaces the old flat per-scenario carousel, which keyed evidenceDirs
+ * by scenario id and so rendered 0 slides (evidenceDir.scenario === runId).
  *
  * Status mapping (5-status palette, derived from parent plan status):
  *   ticked  → ok       (✓ Conforme)
@@ -18,6 +21,7 @@ import {
   type CoverStatus,
   readFlowStatus,
 } from "../coverage.js";
+import { renderFlowDrill } from "../drill.js";
 import { esc } from "../escape.js";
 import type { SiteInputs } from "../types.js";
 
@@ -87,47 +91,6 @@ function renderSteps(scenario: Record<string, unknown>): string {
   );
 }
 
-function renderEvidenceBlock(scenarioId: string, inputs: SiteInputs): string {
-  const ev = inputs.evidenceDirs.find((d) => d.scenario === scenarioId);
-  if (!ev) return "";
-  const base = `evidence/${encodeURIComponent(scenarioId)}/`;
-  const pngs = ev.pngs;
-  if (pngs.length === 0 && !ev.video) return "";
-
-  const carousel =
-    pngs.length === 0
-      ? ""
-      : `
-<dt>Capturas</dt>
-<dd class="gallery">
-  <div class="carousel">
-    <div class="track">
-      ${pngs
-        .map(
-          (p) =>
-            `<a class="slide" href="${esc(base + p)}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(base + p)}" alt=""></a>`,
-        )
-        .join("\n      ")}
-    </div>
-    <button class="cbtn prev" type="button" aria-label="anterior">‹</button>
-    <button class="cbtn next" type="button" aria-label="próxima">›</button>
-    <span class="count"></span>
-  </div>
-  ${ev.video ? `<a class="vid" href="${esc(base + ev.video)}" target="_blank" rel="noopener">▶ vídeo</a>` : ""}
-</dd>`;
-
-  // Video-only path (no screenshots).
-  if (pngs.length === 0 && ev.video) {
-    return `
-<dt>Vídeo da sessão</dt>
-<dd class="gallery">
-  <a class="vid" href="${esc(base + ev.video)}" target="_blank" rel="noopener">▶ vídeo</a>
-</dd>`;
-  }
-
-  return carousel;
-}
-
 function renderScenario(
   scenario: Record<string, unknown>,
   inputs: SiteInputs,
@@ -139,6 +102,7 @@ function renderScenario(
   const preconditions = String(scenario["preconditions"] ?? "");
   const expected = String(scenario["expected_verdict"] ?? "");
   const verification = String(scenario["verification"] ?? "");
+  const flowId = scenario["flow_id"] != null ? String(scenario["flow_id"]) : "";
   const { status } = deriveStatus(id, inputs, scenStatus);
 
   return `
@@ -157,7 +121,7 @@ function renderScenario(
       ${expected ? `<dt>Previsto</dt><dd><span class="pill ${VCLASS[status]}">${esc(expected)}</span></dd>` : ""}
       ${verification ? `<dt>Resultado</dt><dd>${esc(verification)}</dd>` : ""}
       <dt>Citação</dt><dd class="cite">${renderFirstCite(scenario)}</dd>
-      ${renderEvidenceBlock(id, inputs)}
+      ${renderFlowDrill(inputs, flowId)}
     </dl>
   </div>
 </details>`;
@@ -275,21 +239,6 @@ export function renderCasesScript(): string {
       const any = [...g.querySelectorAll('details.sc')].some(d=>!d.classList.contains('hidden'));
       g.classList.toggle('hidden', !any);
     });
-  });
-  /* carousel: prev/next + 1/N count */
-  document.querySelectorAll('.carousel').forEach(c=>{
-    const track = c.querySelector('.track');
-    const count = c.querySelector('.count');
-    if (!track) return;
-    const n = track.children.length;
-    if (n <= 1) c.querySelectorAll('.cbtn').forEach(b=>b.remove());
-    const upd = ()=>{ const w = track.clientWidth; const i = w ? Math.round(track.scrollLeft / w) : 0; if (count) count.textContent = (i+1)+'/'+n; };
-    const prev = c.querySelector('.cbtn.prev');
-    const next = c.querySelector('.cbtn.next');
-    if (prev) prev.addEventListener('click', e=>{ e.preventDefault(); track.scrollBy({left:-track.clientWidth, behavior:'smooth'}); });
-    if (next) next.addEventListener('click', e=>{ e.preventDefault(); track.scrollBy({left: track.clientWidth, behavior:'smooth'}); });
-    track.addEventListener('scroll', ()=>{ clearTimeout(track._t); track._t = setTimeout(upd, 60); });
-    upd();
   });
 })();
 </script>`;
