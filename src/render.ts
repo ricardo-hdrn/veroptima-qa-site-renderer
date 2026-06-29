@@ -20,6 +20,7 @@ import { renderExecution } from "./sections/execution.js";
 import { renderFeatureSpec } from "./sections/feature-spec.js";
 import { renderFindings } from "./sections/findings.js";
 import { renderObjectives } from "./sections/objectives.js";
+import { renderPerFlow } from "./sections/per-flow.js";
 import { renderStats } from "./sections/stats.js";
 import { renderTabNav, renderTabScript } from "./sections/tabs.js";
 import { renderWhatDoes } from "./sections/what-does.js";
@@ -119,6 +120,7 @@ export async function renderFragment(
       renderFeatureSpec(inputs),
       renderObjectives(inputs),
       renderCases(inputs),
+      renderPerFlow(inputs),
       renderDecisions(inputs),
       renderFindings(inputs),
       renderExecution(inputs),
@@ -141,6 +143,7 @@ export async function renderSite(inputs: SiteInputs): Promise<SiteOutput> {
       renderFeatureSpec(inputs),
       renderObjectives(inputs),
       renderCases(inputs),
+      renderPerFlow(inputs),
       renderDecisions(inputs),
       renderFindings(inputs),
       renderExecution(inputs),

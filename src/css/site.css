@@ -295,6 +295,20 @@
   a.drill-shot{display:block}
   a.drill-shot img{width:100%;max-height:320px;object-fit:contain;display:block;background:#0b1220}
   .drill-empty,.drill-noimg{font-size:12px;padding:6px 4px}
+
+  /* §05b per-flow results surface — EVERY adjudicated flow → proving-run drill */
+  .pf-intro{font-size:12.5px;margin:2px 0 14px}
+  .pf-root{display:flex;flex-direction:column;gap:12px}
+  .pf-row{border:1px solid var(--line);border-radius:11px;background:#0b1220;padding:12px 14px}
+  .pf-h{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .pf-id{font-size:12px;color:var(--muted);font-weight:700}
+  .pf-name{font-size:13.5px;color:var(--ink);font-weight:700;flex:1 1 auto}
+  .pf-st{margin-left:auto}
+  dl.pf-drill{margin:10px 0 0;display:grid;grid-template-columns:auto 1fr;gap:4px 12px}
+  dl.pf-drill>dt{font-size:11px;color:var(--faint);font-weight:800;align-self:start}
+  dl.pf-drill>dd{margin:0}
+  .pf-nodrill{font-size:12px;margin:8px 0 0}
+
   table.heat{width:100%;border-collapse:separate;border-spacing:5px;margin-top:2px}
   table.heat th{font-size:11px;color:var(--faint);font-weight:800;text-align:center;padding:2px 0}
   table.heat th span{display:block;font-size:10px;font-weight:600;color:var(--muted)}
