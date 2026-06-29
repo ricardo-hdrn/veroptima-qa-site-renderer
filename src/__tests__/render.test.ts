@@ -22,11 +22,12 @@ import { describe, expect, test } from "bun:test";
 import type { SiteInputs } from "@qa-expert/renderer-adapter-contract";
 
 import { renderSite } from "../render.js";
+import type { AdjudicatedSiteInputs, SiteAdjudicatedKpis } from "../types.js";
 
 const FIXED_TIME = "2026-06-09T12:00:00Z";
 
-function makeInputs(): SiteInputs {
-  return {
+function makeInputs(adjudicated?: SiteAdjudicatedKpis): AdjudicatedSiteInputs {
+  const base: AdjudicatedSiteInputs = {
     source: {
       sessionDir: "/tmp/fake-session",
       capabilityId: "feat-1",
@@ -133,10 +134,22 @@ function makeInputs(): SiteInputs {
     },
     evidenceDirs: [],
     runflowDir: null,
+    flowsWithVerdicts: [],
+    unattachedVerdicts: [],
     builtAtIso: FIXED_TIME,
     locale: "pt-BR",
   };
+  if (adjudicated) base.adjudicated = adjudicated;
+  return base;
 }
+
+const GROUNDED: SiteAdjudicatedKpis = {
+  noAdjudicatedData: false,
+  completude: { verified: 8, addressable: 10, pct: 80 },
+  conformidade: { approved: 7, addressable: 10, pct: 70 },
+  bugsApp: { count: 0, flows: [] },
+  verdictIntegrity: { count: 1, flows: ["FLOW-FLIP"] },
+};
 
 describe("renderSite — determinism", () => {
   test("two renders against the same inputs produce byte-identical bytes", async () => {
@@ -238,5 +251,63 @@ describe("renderSite — blocked plan integrity", () => {
     const out = await renderSite(makeInputs());
     expect(out.html).toContain("PLAN-BLOCK");
     expect(out.html).toContain("source-gap: fixture missing");
+  });
+});
+
+describe("renderSite — grounded adjudicated result is the headline", () => {
+  test("adjudicated present → 80/70 shown as the RESULT; data-attrs carry 80/70/0", async () => {
+    const out = await renderSite(makeInputs(GROUNDED));
+
+    // Machine-extractable grounded truth (for the downstream cross-surface gate).
+    expect(out.html).toContain('data-grounded-completude="80"');
+    expect(out.html).toContain('data-grounded-conformidade="70"');
+    expect(out.html).toContain('data-grounded-bugsapp="0"');
+    expect(out.html).toContain('data-no-adjudicated="false"');
+
+    // The headline gauges are painted from the adjudicated pct (these ids exist
+    // ONLY on the grounded result-card — the synth gauges were demoted/removed).
+    expect(out.html).toContain('id="g-compl" data-pct="80"');
+    expect(out.html).toContain('id="g-conf" data-pct="70"');
+    // Human-visible result numbers + denominators.
+    expect(out.html).toContain("80%");
+    expect(out.html).toContain("70%");
+    expect(out.html).toContain("8/10");
+    expect(out.html).toContain("7/10");
+    // verdictIntegrity surfaced as an integrity note, NOT a bug.
+    expect(out.html).toContain("não é bug");
+
+    // Subordinate synthesis section present AND clearly labeled subordinate.
+    expect(out.html).toContain("Síntese (intenção de design) — não é o resultado medido");
+    // The synth heatmap island still renders (subordinate, not the headline).
+    expect(out.html).toContain('id="dash-heat-data"');
+  });
+
+  test("noAdjudicatedData:true → honest gap; never 0%/100% as a result", async () => {
+    const gap: SiteAdjudicatedKpis = {
+      noAdjudicatedData: true,
+      completude: { verified: 0, addressable: 0, pct: 0 },
+      conformidade: { approved: 0, addressable: 0, pct: 0 },
+      bugsApp: { count: 0, flows: [] },
+      verdictIntegrity: { count: 0, flows: [] },
+    };
+    const out = await renderSite(makeInputs(gap));
+
+    expect(out.html).toContain('data-no-adjudicated="true"');
+    // Honest gap copy present.
+    expect(out.html).toContain("Sem veredito adjudicado");
+    // The 0/100 synth stand-in must NOT be emitted as the grounded result.
+    expect(out.html).not.toContain('data-grounded-completude="0"');
+    expect(out.html).not.toContain('data-grounded-conformidade="100"');
+    // No headline result gauges painted in the gap case.
+    expect(out.html).not.toContain('id="g-compl"');
+  });
+
+  test("raw findings (kind=bug) are labeled raw — distinct from adjudicated bugsApp", async () => {
+    const out = await renderSite(makeInputs(GROUNDED));
+    // The §06 raw-findings label exists and is explicitly distinguished.
+    expect(out.html).toContain("achados brutos (raw findings)");
+    expect(out.html).toContain('data-raw-findings="bug"');
+    // The adjudicated bugsApp result lives on the grounded card, separate.
+    expect(out.html).toContain('data-grounded-bugsapp="0"');
   });
 });

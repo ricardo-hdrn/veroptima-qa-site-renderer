@@ -90,7 +90,11 @@ export function renderFindings(inputs: SiteInputs): string {
 
   return `
 <section id="achados" data-tab="visao">
-  <h2><span class="num">06</span>Bugs</h2>
+  <h2><span class="num">06</span>Bugs <span class="faint">· achados brutos (raw findings)</span></h2>
+  <p class="faint" data-raw-findings="bug" data-raw-findings-count="${bugs.length}" style="margin-top:0">
+    Achados brutos (raw findings, kind=bug) — operacional, <b>distinto</b> do resultado
+    adjudicado <code>bugsApp</code> exibido em "Resultado medido".
+  </p>
   ${
     bugs.length === 0
       ? '<p class="faint">(sem bugs registrados)</p>'

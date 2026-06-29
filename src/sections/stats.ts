@@ -8,7 +8,7 @@
  */
 import { buildDecisionStatusMap } from "../coverage.js";
 import { esc } from "../escape.js";
-import type { SiteInputs } from "../types.js";
+import { readAdjudicated, type SiteInputs } from "../types.js";
 
 function computeKpis(inputs: SiteInputs) {
   const totalDecisions = inputs.decisions.length;
@@ -51,21 +51,44 @@ function computeKpis(inputs: SiteInputs) {
 
 export function renderStats(inputs: SiteInputs): string {
   const k = computeKpis(inputs);
+  const adj = readAdjudicated(inputs);
+  const grounded = adj && !adj.noAdjudicatedData ? adj : undefined;
+
+  // HEADLINE KPI cards. The result comes from the GROUNDED adjudicated verdicts
+  // when present. When there is no verdict source we render an honest gap ("—")
+  // — NEVER the synth-derived 0%/100% as the headline result. The synth-derived
+  // numbers are demoted into the labeled "Síntese" section in §Completude.
+  const resultCards = grounded
+    ? `
+    <div class="stat green">
+      <div class="v">${grounded.completude.pct}%</div>
+      <div class="l">Completude — verificados/endereçáveis (adjudicado: ${grounded.completude.verified}/${grounded.completude.addressable})</div>
+    </div>
+    <div class="stat">
+      <div class="v">${grounded.conformidade.pct}%</div>
+      <div class="l">Conformidade — aprovados/endereçáveis (adjudicado: ${grounded.conformidade.approved}/${grounded.conformidade.addressable})</div>
+    </div>
+    <div class="stat red">
+      <div class="v">${grounded.bugsApp.count}</div>
+      <div class="l">${grounded.bugsApp.count === 1 ? "bug de aplicação" : "bugs de aplicação"} (adjudicado)</div>
+    </div>`
+    : `
+    <div class="stat">
+      <div class="v">—</div>
+      <div class="l">Completude — sem veredito adjudicado</div>
+    </div>
+    <div class="stat">
+      <div class="v">—</div>
+      <div class="l">Conformidade — sem veredito adjudicado</div>
+    </div>
+    <div class="stat">
+      <div class="v">${k.bugs}</div>
+      <div class="l">achados brutos (raw findings, kind=bug) — não adjudicado</div>
+    </div>`;
   return `
 <main>
   <div class="stats wrap">
-    <div class="stat green">
-      <div class="v">${k.completudePct}%</div>
-      <div class="l">Completude — decisões exercitadas (${k.totalDecisions ? `de ${k.totalDecisions}` : "sem decisões"})</div>
-    </div>
-    <div class="stat">
-      <div class="v">${k.conformidadePct}%</div>
-      <div class="l">Conformidade — decisões sem bug</div>
-    </div>
-    <div class="stat red">
-      <div class="v">${k.bugs}${k.poQuestions ? `<small> +${k.poQuestions}</small>` : ""}</div>
-      <div class="l">${k.bugs === 1 ? "bug" : "bugs"}${k.poQuestions ? ` + ${k.poQuestions} ${k.poQuestions === 1 ? "questão PM/PO" : "questões PM/PO"}` : ""}</div>
-    </div>
+    ${resultCards}
     <div class="stat amber">
       <div class="v">${k.blocked}</div>
       <div class="l">planos bloqueados${k.drifts ? ` · ${k.drifts} spec-drift` : ""}</div>

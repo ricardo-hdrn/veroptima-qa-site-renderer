@@ -21,7 +21,7 @@ import {
   planStatusToCut,
 } from "../coverage.js";
 import { esc } from "../escape.js";
-import type { SiteInputs } from "../types.js";
+import { readAdjudicated, type SiteAdjudicatedKpis, type SiteInputs } from "../types.js";
 
 type StatusKey = CoverStatus;
 
@@ -257,8 +257,70 @@ function computeGaugePcts(inputs: SiteInputs): { compl: number; conf: number } {
   return { compl, conf };
 }
 
+/**
+ * GROUNDED RESULT headline — Completude / Conformidade / BugsApp sourced
+ * VERBATIM from `inputs.adjudicated` (runs.db-derived, deterministic). This is
+ * THE RESULT, and the only place the headline gauges (`g-compl` / `g-conf`) are
+ * painted. The synth-derived heatmap below is a labeled subordinate "design
+ * intent" view — never the result.
+ *
+ * When there is no adjudicated verdict source (`noAdjudicatedData`, or the
+ * field is absent because the host is older), this renders an HONEST GAP. It is
+ * structurally impossible for this function to emit 0%/100% gauges as the
+ * result: in the gap branch the gauges are not rendered at all, and the
+ * grounded data-attributes are omitted in favor of `data-no-adjudicated="true"`.
+ */
+function renderGroundedResult(adj: SiteAdjudicatedKpis | undefined): string {
+  // Honest gap: no verdict source. NEVER a 0%/100% synthesized stand-in.
+  if (!adj || adj.noAdjudicatedData) {
+    return `
+  <div class="card result-card result-gap" data-grounded-result="1" data-no-adjudicated="true">
+    <h3 style="margin-top:0">Resultado medido <span class="faint">· veredito adjudicado</span></h3>
+    <p class="faint" style="margin:0"><b>Sem veredito adjudicado</b> — no adjudicated verdicts.
+    Não há fonte de veredito (runs.db) para esta feature: Completude e Conformidade
+    <b>não foram medidas</b>. Nenhum valor 0%/100% é exibido como resultado.</p>
+  </div>`;
+  }
+  const complPct = adj.completude.pct;
+  const confPct = adj.conformidade.pct;
+  const bugs = adj.bugsApp.count;
+  const integ = adj.verdictIntegrity;
+  const bugFlows = adj.bugsApp.flows.length
+    ? ` <span class="faint">(${adj.bugsApp.flows.map((f) => esc(f)).join(", ")})</span>`
+    : "";
+  const integNote =
+    integ.count > 0
+      ? `<li class="faint">Integridade de veredito: <b>${integ.count}</b> meta(s) contraditória(s)/oscilante(s) — <i>nota de integridade, não é bug</i>${
+          integ.flows.length ? ` <span>(${integ.flows.map((f) => esc(f)).join(", ")})</span>` : ""
+        }</li>`
+      : `<li class="faint">Integridade de veredito: <b>0</b> — sem contradições (nota, não é bug)</li>`;
+  return `
+  <div class="card result-card" data-grounded-result="1"
+       data-no-adjudicated="false"
+       data-grounded-completude="${complPct}"
+       data-grounded-conformidade="${confPct}"
+       data-grounded-bugsapp="${bugs}">
+    <h3 style="margin-top:0">Resultado medido <span class="faint">· veredito adjudicado</span></h3>
+    <div class="dashhead">
+      <div class="gaugewrap">
+        <div class="gauge" id="g-compl" data-pct="${complPct}"></div>
+        <div class="gauge" id="g-conf" data-pct="${confPct}"></div>
+      </div>
+      <div class="barwrap">
+        <ul class="result-kpis" style="margin:0;padding-left:18px">
+          <li>Completude <b>${complPct}%</b> <span class="faint">· ${adj.completude.verified}/${adj.completude.addressable} verificados / endereçáveis</span></li>
+          <li>Conformidade <b>${confPct}%</b> <span class="faint">· ${adj.conformidade.approved}/${adj.conformidade.addressable} aprovados / endereçáveis</span></li>
+          <li>Bugs de aplicação <span class="faint">(resultado adjudicado)</span> <b>${bugs}</b>${bugFlows}</li>
+          ${integNote}
+        </ul>
+      </div>
+    </div>
+  </div>`;
+}
+
 export function renderCompletude(inputs: SiteInputs): string {
   const total = inputs.plans.length;
+  const adj = readAdjudicated(inputs);
   const { compl, conf } = computeGaugePcts(inputs);
   const DIM_LABELS: Record<string, string> = {
     decisao: "Decisão",
@@ -277,20 +339,21 @@ export function renderCompletude(inputs: SiteInputs): string {
   return `
 <section id="painel" data-tab="visao">
   <h2>Completude e Cobertura</h2>
-  <div class="card">
+  ${renderGroundedResult(adj)}
+  <div class="card synth-subordinate" style="margin-top:14px">
+    <h3 style="margin-top:0">Síntese (intenção de design) — não é o resultado medido</h3>
+    <p class="faint" style="margin-top:0">Derivado dos artefatos de síntese (decisões/planos),
+    <b>não</b> de vereditos. Mapa de intenção de design — subordinado ao resultado medido acima.</p>
     <div class="dashhead">
-      <div class="gaugewrap">
-        <div class="gauge" id="g-compl" data-pct="${compl}"></div>
-        <div class="gauge" id="g-conf" data-pct="${conf}"></div>
-      </div>
       <div class="barwrap">
-        <h3 style="margin-bottom:10px">Distribuição por status <span class="faint">· ${total} plano(s)</span></h3>
+        <p style="margin:0 0 10px">Completude (síntese) <b>${compl}%</b> · Conformidade (síntese) <b>${conf}%</b></p>
+        <h4 style="margin:0 0 10px">Distribuição por status <span class="faint">· ${total} plano(s)</span></h4>
         ${renderDistributionBar(inputs, total)}
       </div>
     </div>
   </div>
-  <div class="card" style="margin-top:14px">
-    <h3 style="margin-top:0">Mapa de calor</h3>
+  <div class="card synth-subordinate" style="margin-top:14px">
+    <h3 style="margin-top:0">Mapa de calor <span class="faint">(síntese · intenção de design)</span></h3>
     <div class="fbar" id="dimtoggle">
       <button class="fbtn active" data-d="decisao">Por decisão</button>
       <button class="fbtn" data-d="objetivo">Por objetivo</button>
